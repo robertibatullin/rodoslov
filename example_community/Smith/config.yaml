@@ -1,0 +1,17 @@
+# Example config for faker: generation from an extendable file
+# Run "python faker.py example_community/Smith" to regenerate Smith.yaml
+extend: "_extend.yaml"
+
+majorat: false
+retry_until_survives: false
+max-attempts: 1000
+
+name_sources:
+  dir: "example_community/name_sources"
+  male: british_m.csv
+  female: british_f.csv
+  male_surnames: british_s.csv
+  female_surnames: british_s.csv
+
+write_file: true
+output_path: Smith.yaml

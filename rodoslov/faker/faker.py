@@ -19,9 +19,9 @@ Usage:
         --cutoff YEAR   Stop generating beyond this year (default: current year)
 
 Examples:
-    python faker.py example/Smith
-    python faker.py example/Smith --seed 99
-    python faker.py example/Smith --config custom_config.yaml --cutoff 1980
+    python faker.py example_community/Smith
+    python faker.py example_community/Smith --seed 99
+    python faker.py example_community/Smith --config custom_config.yaml --cutoff 1980
 
 """
 
@@ -658,7 +658,7 @@ def _resolve_name_source(name_sources: dict, key: str) -> str | None:
     if not filename:
         return None
     names_dir = name_sources.get("dir")
-    return str(Path(names_dir) / filename) if names_dir else filename
+    return str(Path(names_dir).resolve() / filename) if names_dir else filename
 
 
 def main():
@@ -666,8 +666,8 @@ def main():
         description="Generate a fake family tree in nissaga-compatible YAML format."
     )
     parser.add_argument(
-        "family_dir", type=str,
-        help="Directory holding this family's config.yaml; output is written here"
+        "lineage_dir", type=str,
+        help="Directory holding this lineage's config.yaml; output is written here"
     )
     parser.add_argument(
         "--config", type=str, default=None,
@@ -683,15 +683,17 @@ def main():
     )
     args = parser.parse_args()
 
-    family_dir = Path(args.family_dir)
+    lineage_dir = Path(args.lineage_dir).resolve()
     try:
-        with open(family_dir / "config.yaml", "r", encoding="utf-8") as f:
+        with open(lineage_dir / "config.yaml", "r", encoding="utf-8") as f:
             family_config = yaml.safe_load(f)
     except FileNotFoundError:
-        print(f"Config file not found: {family_dir / 'config.yaml'}", file=sys.stderr)
+        print(f"Config file not found: {lineage_dir / 'config.yaml'}", file=sys.stderr)
         sys.exit(1)
 
     extend_path = family_config.get("extend")
+    if extend_path is not None:
+        extend_path = str((lineage_dir / extend_path).resolve())
     progenitor = family_config.get("progenitor") or {}
     surname = progenitor.get("surname")
     name_sources = family_config.get("name_sources") or {}
@@ -714,7 +716,7 @@ def main():
     )
 
     if family_config.get("write_file", True):
-        output_path = family_dir / family_config.get("output_path", f"{surname or family_dir.name}.yaml")
+        output_path = lineage_dir / family_config.get("output_path", f"{surname or lineage_dir.name}.yaml")
         with open(output_path, "w", encoding="utf-8") as f:
             f.write(yaml_content)
         print(f"Written to {output_path}", file=sys.stderr)

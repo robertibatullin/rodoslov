@@ -8,8 +8,8 @@ SQLITE_DB_FILENAME = "genealogy.db"
 
 
 class GenealogySQLiteClient:
-    def __init__(self, community_path: str | Path):
-        self.db_path = str(Path(community_path).resolve() / SQLITE_DB_FILENAME)
+    def __init__(self, db_path: str | Path):
+        self.db_path = db_path
 
     def query(self, sql: str, params: dict | None = None) -> pd.DataFrame:
         conn = sqlite3.connect(self.db_path)

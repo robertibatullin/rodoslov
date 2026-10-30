@@ -26,8 +26,9 @@ from pathlib import Path
 import yaml
 from flask import Flask, jsonify, request, send_file
 
-from rodoslov.manager.sqlite_client import GenealogySQLiteClient, SQLITE_DB_FILENAME
-from rodoslov.manager.yaml_to_sqlite import yaml_to_sqlite
+from sqlite_client import GenealogySQLiteClient
+from yaml_to_sqlite import yaml_to_sqlite, SQLITE_DB_FILENAME
+
 
 BASE_DIR = Path(__file__).resolve().parent
 HTML_PATH = BASE_DIR / "gui.html"
@@ -403,7 +404,7 @@ def main() -> None:
     if not lineage_path.is_file():
         sys.exit(f"File not found: {lineage_path}")
     global DB_PATH
-    community_dir = Path(lineage_path).resolve().parent.parent
+    community_dir = lineage_path.parent.parent
     DB_PATH = community_dir / SQLITE_DB_FILENAME
     global YAML_FILE
     YAML_FILE = lineage_path

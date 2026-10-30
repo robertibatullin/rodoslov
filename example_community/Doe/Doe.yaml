@@ -1,0 +1,149 @@
+people:
+  P-2048827757:
+    born: 1950
+    gender: M
+    name: Spencer Doe
+    died: 2008
+  P-1841832753:
+    born: 1952
+    gender: F
+    name: June Coulson
+    died: 2023
+  P-3264204871:
+    born: 1972
+    gender: F
+    name: Maude Doe
+  P-2098087726:
+    born: 1979
+    gender: M
+    name: Jose Doe
+  P-2996072380:
+    born: 1986
+    gender: F
+    name: Juliette Doe
+  P-2383263947:
+    born: 1950
+    gender: F
+    name: Ena Percival
+    died: 2015
+  P-1599787197:
+    born: 1975
+    gender: M
+    name: Martyn Feeney
+  P-983668325:
+    born: 2001
+    gender: F
+    name: Amy Feeney
+  P-1203607201:
+    born: 2004
+    gender: F
+    name: Thérèse Feeney
+  P-4014270469:
+    born: 2007
+    gender: F
+    name: Georgiana Feeney
+  P-3511819091:
+    born: 2011
+    gender: M
+    name: John-Charles Feeney
+  P-13216709:
+    born: 1999
+    gender: M
+    name: Edmund Charlton
+  P-1557179996:
+    born: 2026
+    gender: M
+    name: Wilfred Charlton
+  P-3391896225:
+    born: 2001
+    gender: M
+    name: Jeffrey Gowan
+  P-4086791895:
+    born: 2005
+    gender: M
+    name: Jocelyn Maynard
+  P-1242531252:
+    born: 1979
+    gender: F
+    name: Hope Grimes
+  P-3633886601:
+    born: 2015
+    gender: F
+    name: Loveday Doe
+  P-3987383894:
+    born: 1985
+    gender: M
+    name: Wyn Homer
+  P-3929718469:
+    born: 2024
+    gender: F
+    name: Nina Homer
+  P-2504158111:
+    born: 1984
+    gender: F
+    name: Jane Doe
+  P-1546793139:
+    born: 1991
+    gender: M
+    name: Robert Doe
+  P-994341760:
+    born: 1960
+    gender: F
+    name: Eva Nameless
+families:
+- parents:
+  - P-2048827757
+  - P-1841832753
+  married: 1971
+  children:
+  - P-3264204871
+  - P-2098087726
+  - P-2996072380
+  - P-2504158111
+  divorced: 1990
+- parents:
+  - P-2048827757
+  - P-2383263947
+  married: 1991
+  children:
+  - P-1546793139
+  divorced: 1993
+- parents:
+  - P-3264204871
+  - P-1599787197
+  married: 1994
+  children:
+  - P-983668325
+  - P-1203607201
+  - P-4014270469
+  - P-3511819091
+- parents:
+  - P-983668325
+  - P-13216709
+  married: 2023
+  children:
+  - P-1557179996
+- parents:
+  - P-1203607201
+  - P-3391896225
+  married: 2026
+- parents:
+  - P-4014270469
+  - P-4086791895
+  married: 2025
+- parents:
+  - P-2098087726
+  - P-1242531252
+  married: 1997
+  children:
+  - P-3633886601
+- parents:
+  - P-2996072380
+  - P-3987383894
+  married: 2016
+  children:
+  - P-3929718469
+- parents:
+  - P-2048827757
+  - P-994341760
+  married: 1995

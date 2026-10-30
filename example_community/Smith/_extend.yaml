@@ -1,0 +1,15 @@
+people:
+  john_smith:
+    born: 1980
+    gender: M
+    name: John Smith
+  jane_doe:
+    born: 1984
+    gender: F
+    name: Jane Doe
+families:
+- parents:
+  - john_smith
+  - jane_doe
+  married: 2005
+  children: null

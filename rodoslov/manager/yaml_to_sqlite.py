@@ -3,7 +3,8 @@ from pathlib import Path
 
 import yaml
 
-from sqlite_client import SQLITE_DB_FILENAME
+
+SQLITE_DB_FILENAME = "genealogy.db"
 
 
 # A person appearing in several files must agree on these, or two different

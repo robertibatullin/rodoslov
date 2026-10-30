@@ -1,0 +1,20 @@
+people:
+  P-487476681:
+    born: 1980
+    gender: M
+    name: John Smith
+  P-2504158111:
+    born: 1984
+    gender: F
+    name: Jane Doe
+  P-1745651278:
+    born: 2011
+    gender: M
+    name: Terrance Smith
+families:
+- parents:
+  - P-487476681
+  - P-2504158111
+  married: 2005
+  children:
+  - P-1745651278
