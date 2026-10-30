@@ -1,4 +1,5 @@
 import sys
+import sqlite3
 
 import pytest
 import yaml
@@ -10,7 +11,7 @@ from rodoslov.faker.faker import GenealogyFaker, PersonRecord, generate_family_t
 def generate(**kwargs):
     kwargs.setdefault("seed", 1)
     kwargs.setdefault("cutoff_year", 2000)
-    return yaml.safe_load(generate_family_tree(1900, **kwargs))
+    return yaml.safe_load(generate_family_tree(progenitor_birth_year=1900, **kwargs))
 
 
 def shape(tree):
@@ -72,7 +73,7 @@ def test_resolve_name_source(tmp_path):
 
 @pytest.fixture
 def engine():
-    return GenealogyFaker(1900, seed=1)
+    return GenealogyFaker(progenitor_birth_year=1900, seed=1)
 
 
 def test_config_value_scalar_map_and_clamping(engine):
@@ -165,7 +166,7 @@ def test_retry_finds_living_person():
 
 def test_retry_raises_when_no_attempts_allowed():
     with pytest.raises(RuntimeError):
-        GenealogyFaker(1900, seed=1, cutoff_year=2000).generate_with_retry(max_attempts=0)
+        GenealogyFaker(progenitor_birth_year=1900, seed=1, cutoff_year=2000).generate_with_retry(max_attempts=0)
 
 
 def test_custom_config_file(tmp_path):
@@ -232,6 +233,28 @@ def test_main_writes_output_file(tmp_path, monkeypatch):
     fk.main()
     out = yaml.safe_load((tmp_path / "Doe.yaml").read_text(encoding="utf-8"))
     assert out["people"]
+
+
+def test_main_syncs_database(tmp_path, monkeypatch):
+    lineage = tmp_path / "Doe"
+    lineage.mkdir()
+    (lineage / "config.yaml").write_text(
+        "progenitor:\n  birth_year: 1900\n  gender: M\n  surname: Doe\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(sys, "argv", ["rodoslov-faker", str(lineage), "--seed", "1", "--cutoff", "1950"])
+    fk.main()
+    conn = sqlite3.connect(tmp_path / "genealogy.db")
+    try:
+        count = conn.execute("SELECT COUNT(*) FROM people").fetchone()[0]
+    finally:
+        conn.close()
+    assert count == len(yaml.safe_load((lineage / "Doe.yaml").read_text(encoding="utf-8"))["people"])
+
+
+def test_faker_accepts_existing_database(db_path):
+    engine = GenealogyFaker(db_path=db_path, progenitor_birth_year=1900, seed=1, cutoff_year=1950)
+    engine.generate()
+    assert engine.people
 
 
 def test_main_without_config_exits(tmp_path, monkeypatch):

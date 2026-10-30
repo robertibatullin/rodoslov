@@ -35,6 +35,14 @@ from pathlib import Path
 
 import yaml
 
+# Allow running this file directly (python rodoslov/faker/faker.py) without installing the package.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from rodoslov.manager.helpers import generate_person_id
+from rodoslov.manager.yaml_to_sqlite import yaml_to_sqlite, SQLITE_DB_FILENAME
+
+
 DEFAULT_CUTOFF_YEAR = datetime.now().year
 DEFAULT_CONFIG_PATH = Path(__file__).parent / "default_config.yaml"
 _ID_RNG = random.SystemRandom()
@@ -70,6 +78,7 @@ class GenealogyFaker:
 
     def __init__(
         self,
+        db_path: str | Path | None = None,
         progenitor_birth_year: int | None = None,
         seed: int | None = None,
         cutoff_year: int | None = None,
@@ -85,6 +94,7 @@ class GenealogyFaker:
     ):
         if extend_path is None and progenitor_birth_year is None:
             raise ValueError("Either progenitor_birth_year or extend_path must be given")
+        self.db_path = db_path
         self.progenitor_birth_year = progenitor_birth_year
         self.extend_path = extend_path
         self.cutoff_year = cutoff_year if cutoff_year is not None else DEFAULT_CUTOFF_YEAR
@@ -112,11 +122,7 @@ class GenealogyFaker:
         otherwise two families generated with one seed get identical ids
         and silently overwrite each other in the database.
         """
-        # TODO: move this function out to manager; check duplicates across db, not just this run
-        while True:
-            pid = f'P-{_ID_RNG.getrandbits(32)}'
-            if pid not in self.people:
-                return pid
+        return generate_person_id(_ID_RNG, self.db_path, set(self.people))
 
     @staticmethod
     def _load_names(path: str) -> list[str]:
@@ -616,6 +622,7 @@ class GenealogyFaker:
 
 
 def generate_family_tree(
+    db_path: str | Path | None = None,
     progenitor_birth_year: int | None = None,
     seed: int | None = None,
     cutoff_year: int | None = None,
@@ -637,7 +644,8 @@ def generate_family_tree(
     GenealogyFaker.generate_with_retry) instead of generating just once.
     """
     faker = GenealogyFaker(
-        progenitor_birth_year,
+        db_path=db_path,
+        progenitor_birth_year=progenitor_birth_year,
         seed=seed,
         cutoff_year=cutoff_year,
         majorat=majorat,
@@ -695,6 +703,9 @@ def main():
         print(f"Config file not found: {lineage_dir / 'config.yaml'}", file=sys.stderr)
         sys.exit(1)
 
+    community_dir = lineage_dir.parent
+    db_path = community_dir / SQLITE_DB_FILENAME
+
     extend_path = family_config.get("extend")
     if extend_path is not None:
         extend_path = str((lineage_dir / extend_path).resolve())
@@ -703,7 +714,8 @@ def main():
     name_sources = family_config.get("name_sources") or {}
 
     yaml_content = generate_family_tree(
-        progenitor.get("birth_year"),
+        db_path=db_path if db_path.exists() else None,
+        progenitor_birth_year=progenitor.get("birth_year"),
         seed=args.seed,
         cutoff_year=args.cutoff,
         majorat=family_config.get("majorat", False),
@@ -724,6 +736,8 @@ def main():
         with open(output_path, "w", encoding="utf-8") as f:
             f.write(yaml_content)
         print(f"Written to {output_path}", file=sys.stderr)
+        yaml_to_sqlite(community_dir)
+        print(f"Database updated at {community_dir / SQLITE_DB_FILENAME}", file=sys.stderr)
     else:
         print(yaml_content)
 

@@ -44,7 +44,7 @@ families:
 | Command | Purpose |
 | --- | --- |
 | `rodoslov-sync <community_dir>` | Rebuild `genealogy.db` from all YAML files (files named `*_extend.yaml` are skipped). |
-| `rodoslov-gui <lineage.yaml> [--port 5000] [--no-browser]` | Browser GUI to edit one lineage file; every change is saved and the database re-synced. |
+| `python rodoslov\manager\gui.py <lineage.yaml> [--port 5000] [--no-browser]` | Browser GUI to edit one lineage file; every change is saved and the database re-synced. |
 | `rodoslov-faker <lineage_dir> [--config FILE] [--seed N] [--cutoff YEAR]` | Generate a fictional lineage from `<lineage_dir>/config.yaml`. |
 
 The faker's `config.yaml` either defines a `progenitor` (birth year, gender, surname) or an `extend` file to continue from. See `example_community/` for both variants. Demography (mortality, marriage, fertility) is configured in `rodoslov/faker/default_config.yaml`.

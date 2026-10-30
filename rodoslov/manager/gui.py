@@ -1,13 +1,13 @@
 """gui.py - Browser GUI for manually editing a genealogy YAML file.
 
 Usage:
-    rodoslov-gui lineage_file.yaml [--port 5000] [--no-browser]
+    python rodoslov/manager/gui.py lineage_file.yaml [--port 5000] [--no-browser]
 
 Renders the family tree of the given nissaga-style YAML file (people +
 families) in the browser, and lets you edit it with right-click menus:
 
-    person box      Edit / Add spouse / Select spouse
-    marriage box    Edit / Add child / Select child
+    person box      Edit / Add spouse / Select spouse / Delete
+    marriage box    Edit / Add child / Select child / Delete
     empty area      Add person
 
 Every change is written to the YAML file and then yaml_to_sqlite.py is run so
@@ -26,8 +26,13 @@ from pathlib import Path
 import yaml
 from flask import Flask, jsonify, request, send_file
 
+# Allow running this file directly (python rodoslov/manager/gui.py) without installing the package.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 from rodoslov.manager.sqlite_client import GenealogySQLiteClient
 from rodoslov.manager.yaml_to_sqlite import yaml_to_sqlite, SQLITE_DB_FILENAME
+from rodoslov.manager.helpers import generate_person_id
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -113,14 +118,38 @@ def db_person(pid: str) -> dict | None:
 
 def new_id(data: dict) -> str:
     """A fresh "P-<number>" id absent from both the YAML and the database."""
+    return generate_person_id(_ID_RNG, DB_PATH, set(data["people"]))
+
+
+def yaml_rel() -> str:
+    """The edited YAML's path relative to the community dir, as stored in people.source_file."""
+    try:
+        return str(YAML_FILE.relative_to(DB_PATH.parent))
+    except ValueError:
+        return YAML_FILE.name
+
+
+def db_person_info() -> dict[str, dict]:
+    """Biography and other source files of every person in the database, keyed by id."""
+    df = GenealogySQLiteClient(DB_PATH).query(
+        "SELECT p.id, p.source_file, b.bio FROM people p LEFT JOIN biographies b ON b.id = p.id"
+    )
+    here = yaml_rel()
+    info = {}
+    for pid, source_file, bio in df.itertuples(index=False):
+        info[pid] = {
+            "bio": bio if isinstance(bio, str) and bio.strip() else None,
+            "also_in": [s for s in source_file.split(", ") if s != here],
+        }
+    return info
+
+
+def drop_biography(pid: str) -> None:
+    """Delete the biography of `pid` (if any) from the database."""
     conn = sqlite3.connect(DB_PATH)
     try:
-        while True:
-            pid = f"P-{_ID_RNG.getrandbits(32)}"
-            if pid in data["people"]:
-                continue
-            if conn.execute("SELECT 1 FROM people WHERE id = ?", (pid,)).fetchone() is None:
-                return pid
+        conn.execute("DELETE FROM biographies WHERE id = ?", (pid,))
+        conn.commit()
     finally:
         conn.close()
 
@@ -238,10 +267,13 @@ def index():
 
 @app.get("/api/tree")
 def api_tree():
+    """The edited file's people and families, plus each person's biography and other YAML files."""
     data = load_data()
+    info = db_person_info()
     people = {
         pid: {"id": pid, "name": p.get("name"), "gender": p.get("gender"),
-              "born": p.get("born"), "died": p.get("died")}
+              "born": p.get("born"), "died": p.get("died"),
+              "bio": info.get(pid, {}).get("bio"), "also_in": info.get(pid, {}).get("also_in", [])}
         for pid, p in data["people"].items()
     }
     families = [
@@ -250,6 +282,36 @@ def api_tree():
         for i, f in enumerate(data["families"])
     ]
     return jsonify(file=YAML_FILE.name, people=people, families=families)
+
+
+@app.post("/api/person/delete")
+def api_person_delete():
+    """Remove a person from this YAML and the database.
+
+    Spouses and children stay: the person is only dropped from the parents /
+    children lists of the families. A family left without parents, or with a
+    single parent and no children (a marriage that no longer exists), is removed.
+    The person remains in the database if another YAML file still lists them.
+    """
+    req = body()
+    data = load_data()
+    pid = req.get("id")
+    get_person(data, pid)
+    also_in = db_person_info().get(pid, {}).get("also_in", [])
+    del data["people"][pid]
+    families = []
+    for fam in data["families"]:
+        fam["parents"] = [p for p in fam.get("parents") or [] if p != pid]
+        if fam.get("children"):
+            fam["children"] = [c for c in fam["children"] if c != pid]
+        if fam["parents"] and (fam.get("children") or len(fam["parents"]) > 1):
+            families.append(fam)
+    data["families"] = families
+    save_data(data)
+    if not also_in:
+        drop_biography(pid)
+    warning = sync_db()
+    return jsonify(ok=True, warning=warning)
 
 
 @app.post("/api/person/edit")
@@ -350,6 +412,27 @@ def api_family_edit():
     return finish(data)
 
 
+@app.post("/api/family/delete")
+def api_family_delete():
+    """Remove the father from a marriage; people are kept and children stay with the mother.
+
+    A marriage left without children (or that had no father) is removed entirely.
+    """
+    req = body()
+    data = load_data()
+    family = get_family(data, req.get("index"))
+    parents = list(family.get("parents") or [])
+    father = next((p for p in parents if data["people"].get(p, {}).get("gender") == "M"), None)
+    if father is None and family.get("children"):
+        raise ApiError("This marriage has no father to remove")
+    if father is not None:
+        parents.remove(father)
+    family["parents"] = parents
+    if not parents or not family.get("children"):
+        data["families"] = [f for f in data["families"] if f is not family]
+    return finish(data)
+
+
 @app.post("/api/child/add")
 def api_child_add():
     req = body()
@@ -366,20 +449,22 @@ def api_child_add():
 
 @app.get("/api/child/candidates")
 def api_child_candidates():
+    """Parentless people with marriage year <= birth year <= min(parents' death years, divorce year)."""
     data = load_data()
     family = get_family(data, request.args.get("index"))
     parents = family.get("parents") or []
     lower = family.get("married")
-    deaths = [data["people"][p].get("died") for p in parents if p in data["people"]]
-    deaths = [d for d in deaths if d is not None]
-    upper = min(deaths) if deaths else None
+    ends = [data["people"][p].get("died") for p in parents if p in data["people"]]
+    ends.append(family.get("divorced"))
+    ends = [y for y in ends if y is not None]
+    upper = min(ends) if ends else None
     sql = """
         SELECT p.id, p.name, p.gender, p.born, p.died, p.source_file
         FROM people p
         WHERE p.id NOT IN (SELECT person_id FROM family_children)
           AND p.born IS NOT NULL
-          AND (:lower IS NULL OR p.born > :lower)
-          AND (:upper IS NULL OR p.born < :upper)
+          AND (:lower IS NULL OR p.born >= :lower)
+          AND (:upper IS NULL OR p.born <= :upper)
         ORDER BY p.born, p.name
     """
     df = GenealogySQLiteClient(DB_PATH).query(sql, {"lower": lower, "upper": upper})

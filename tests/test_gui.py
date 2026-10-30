@@ -1,7 +1,11 @@
+import sqlite3
+from pathlib import Path
+
 import pytest
 import yaml
 
 from rodoslov.manager import gui
+from rodoslov.manager.sqlite_client import GenealogySQLiteClient
 
 
 @pytest.fixture
@@ -184,6 +188,23 @@ def test_child_candidates_are_parentless_and_in_range(client):
     assert ids == {"P-6"}
 
 
+def test_child_candidate_bounds_are_inclusive(client):
+    for born in (1973, 1974, 2020, 2021):
+        client.post("/api/person/add", json={"name": f"B{born}", "gender": "M", "born": born})
+    candidates = client.get("/api/child/candidates?index=0").get_json()["candidates"]
+    born_years = {c["born"] for c in candidates}
+    # married 1974, father died 2020: 1974 and 2020 are allowed, 1973 and 2021 are not
+    assert {1974, 2020} <= born_years and not {1973, 2021} & born_years
+
+
+def test_child_candidates_stop_at_divorce(client):
+    client.post("/api/family/edit", json={"index": 0, "married": 1974, "divorced": 1980})
+    for born in (1980, 1981):
+        client.post("/api/person/add", json={"name": f"B{born}", "gender": "F", "born": born})
+    born_years = {c["born"] for c in client.get("/api/child/candidates?index=0").get_json()["candidates"]}
+    assert 1980 in born_years and 1981 not in born_years and 1990 not in born_years
+
+
 def test_select_child(client, community):
     response = client.post("/api/child/select", json={"index": 0, "child_id": "P-6"})
     assert response.status_code == 200
@@ -194,6 +215,115 @@ def test_select_child(client, community):
 
 def test_select_child_cannot_be_own_parent(client):
     assert client.post("/api/child/select", json={"index": 0, "child_id": "P-1"}).status_code == 400
+
+
+# ── tree info: biography and multi-file people ────────────────
+
+def test_tree_has_bio_and_other_files(client, db_path):
+    GenealogySQLiteClient(db_path).write_bio("P-1", "A farmer.")
+    people = client.get("/api/tree").get_json()["people"]
+    assert people["P-1"]["bio"] == "A farmer." and people["P-1"]["also_in"] == []
+    assert people["P-2"]["bio"] is None
+    assert people["P-3"]["also_in"] == [str(Path("Doe") / "Doe.yaml")]  # also listed in the Doe lineage
+
+
+# ── delete person ─────────────────────────────────────────────
+
+def db_rows(db_path, sql):
+    conn = sqlite3.connect(db_path)
+    try:
+        return conn.execute(sql).fetchall()
+    finally:
+        conn.close()
+
+
+def test_delete_person_keeps_spouse_and_children(client, community, db_path):
+    response = client.post("/api/person/delete", json={"id": "P-1"})
+    assert response.status_code == 200 and response.get_json()["warning"] is None
+    data = saved(community)
+    assert "P-1" not in data["people"]
+    assert data["families"][0]["parents"] == ["P-2"]
+    assert data["families"][0]["children"] == ["P-3", "P-4"]
+    assert db_rows(db_path, "SELECT id FROM people WHERE id = 'P-1'") == []
+    assert db_rows(db_path, "SELECT husband, wife FROM families WHERE married = 1974") == [(None, "P-2")]
+
+
+def test_delete_child_removes_it_from_children(client, community):
+    client.post("/api/person/delete", json={"id": "P-4"})
+    data = saved(community)
+    assert "P-4" not in data["people"]
+    assert data["families"][0]["children"] == ["P-3"]
+    assert data["families"][0]["parents"] == ["P-1", "P-2"]
+
+
+def test_delete_last_parent_drops_the_family(client, community):
+    client.post("/api/person/delete", json={"id": "P-1"})
+    client.post("/api/person/delete", json={"id": "P-2"})
+    data = saved(community)
+    assert data["families"] == []
+    assert {"P-3", "P-4"} <= set(data["people"])
+
+
+def test_delete_person_drops_biography(client, db_path):
+    GenealogySQLiteClient(db_path).write_bio("P-1", "A farmer.")
+    client.post("/api/person/delete", json={"id": "P-1"})
+    assert db_rows(db_path, "SELECT id FROM biographies") == []
+
+
+def test_delete_person_listed_in_another_yaml_stays_in_database(client, community, db_path):
+    GenealogySQLiteClient(db_path).write_bio("P-3", "Ann's story.")
+    client.post("/api/person/delete", json={"id": "P-3"})
+    assert "P-3" not in saved(community)["people"]
+    assert db_rows(db_path, "SELECT id FROM people WHERE id = 'P-3'") == [("P-3",)]  # still in Doe.yaml
+    assert db_rows(db_path, "SELECT bio FROM biographies WHERE id = 'P-3'") == [("Ann's story.",)]
+
+
+def test_delete_unknown_person(client):
+    assert client.post("/api/person/delete", json={"id": "P-404"}).status_code == 400
+
+
+def test_delete_spouse_of_childless_marriage_removes_marriage(client, community, db_path):
+    client.post("/api/spouse/add", json={"person_id": "P-4", "name": "Wife", "born": 1980, "married": 2005})
+    assert len(saved(community)["families"]) == 2
+    wife = next(pid for pid, p in saved(community)["people"].items() if p.get("name") == "Wife")
+    client.post("/api/person/delete", json={"id": wife})
+    data = saved(community)
+    assert len(data["families"]) == 1 and data["families"][0]["married"] == 1974
+    assert "P-4" in data["people"]
+    assert db_rows(db_path, "SELECT COUNT(*) FROM families") == [(2,)]  # 1 Smith + 1 Doe
+
+
+# ── delete marriage ───────────────────────────────────────────
+
+def test_delete_marriage_removes_father_only(client, community, db_path):
+    response = client.post("/api/family/delete", json={"index": 0})
+    assert response.status_code == 200
+    data = saved(community)
+    assert {"P-1", "P-2", "P-3", "P-4"} <= set(data["people"])  # nobody deleted
+    assert data["families"][0]["parents"] == ["P-2"]
+    assert data["families"][0]["children"] == ["P-3", "P-4"]
+    assert db_rows(db_path, "SELECT husband, wife FROM families WHERE married = 1974") == [(None, "P-2")]
+
+
+def test_father_less_marriage_is_removed_with_its_last_child(client, community):
+    client.post("/api/family/delete", json={"index": 0})  # leaves mother + children
+    client.post("/api/child/select", json={"index": 0, "child_id": "P-6"})
+    assert client.post("/api/family/delete", json={"index": 0}).status_code == 400  # children keep it alive
+    for child in ("P-3", "P-4", "P-6"):
+        client.post("/api/person/delete", json={"id": child})
+    assert saved(community)["families"] == []
+
+
+def test_delete_childless_marriage_removes_entry(client, community):
+    client.post("/api/spouse/add", json={"person_id": "P-4", "name": "Wife", "born": 1980, "married": 2005})
+    assert client.post("/api/family/delete", json={"index": 1}).status_code == 200
+    data = saved(community)
+    assert len(data["families"]) == 1
+    assert len(data["people"]) == 5  # nobody deleted
+
+
+def test_delete_unknown_marriage(client):
+    assert client.post("/api/family/delete", json={"index": 9}).status_code == 400
 
 
 # ── db sync ───────────────────────────────────────────────────

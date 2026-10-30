@@ -14,6 +14,10 @@
   .person.M rect { fill: #dbe8f7; stroke: #5b87c5; }
   .person.F rect { fill: #f7dbe6; stroke: #c55b8a; }
   .person.U rect { fill: #eee; stroke: #888; }
+  .person.M.has-bio rect { fill: #b3cdee; }
+  .person.F.has-bio rect { fill: #eeb3cc; }
+  .person.U.has-bio rect { fill: #cfcfcf; }
+  .person.M rect.inner, .person.F rect.inner, .person.U rect.inner { fill: none; }
   .marriage rect { fill: #fff8dc; stroke: #b9a24a; stroke-width: 1.2; rx: 10; }
   .person:hover rect, .marriage:hover rect { stroke-width: 3; }
   text { font-size: 12px; fill: #222; pointer-events: none; text-anchor: middle; }
@@ -27,6 +31,9 @@
   #menu div { padding: 6px 14px; font-size: 13px; cursor: pointer; }
   #menu div:hover { background: #dde9fb; }
   #menu div.head { font-weight: 600; color: #555; cursor: default; background: #f0f0f0; }
+  #tip { position: fixed; display: none; z-index: 25; pointer-events: none; white-space: pre-wrap; max-width: 360px;
+         max-height: 60vh; overflow: hidden; background: #fffbe8; border: 1px solid #b9a24a; border-radius: 4px;
+         padding: 8px 10px; font-size: 13px; box-shadow: 2px 3px 8px rgba(0,0,0,.25); }
   .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 30; display: flex; align-items: center; justify-content: center; }
   .dialog { background: #fff; border-radius: 6px; padding: 16px 20px; min-width: 340px; max-width: 560px; box-shadow: 0 6px 24px rgba(0,0,0,.4); }
   .dialog h3 { margin: 0 0 12px; font-size: 16px; }
@@ -46,12 +53,13 @@
 <div id="bar">Genealogy editor: <b id="fname"></b><span>right-click a person, a marriage box or an empty area; drag to pan, wheel to zoom</span></div>
 <svg id="svg"><g id="viewport"></g></svg>
 <div id="menu"></div>
+<div id="tip"></div>
 <div id="toast"></div>
 
 <script>
 "use strict";
 const NS = "http://www.w3.org/2000/svg";
-const BOX_W = 150, BOX_H = 58, MBOX_W = 72, MBOX_H = 38, GAP = 18, ROW_H = 140, BLOCK_GAP = 28, ROOT_GAP = 70, BUS = 24;
+const BOX_W = 150, BOX_H = 58, MBOX_W = 72, MBOX_H = 38, GAP = 18, ROW_H = 140, BLOCK_GAP = 28, ROOT_GAP = 70, BUS = 30;
 
 let tree = null;
 let view = { x: 0, y: 0, k: 1 };
@@ -113,7 +121,7 @@ function layout(tree) {
       const dir = i % 2 === 0 ? 1 : -1;
       let cur = dir > 0 ? rc : lc;
       const mx = cur + dir * (GAP + MBOX_W / 2);
-      const m = { kind: "marriage", idx: f.index, x: mx, level };
+      const m = { kind: "marriage", idx: f.index, x: mx, level, owner: pid, slot: i, dir };
       row.push(m);
       cur = mx + dir * (MBOX_W / 2);
       const sid = spouseOf(f, pid);
@@ -231,11 +239,14 @@ function datesOf(p) {
 }
 
 function drawPerson(parent, p, pos) {
-  const g = el("g", { class: "person " + (p.gender === "M" || p.gender === "F" ? p.gender : "U"),
+  const g = el("g", { class: "person " + (p.gender === "M" || p.gender === "F" ? p.gender : "U") + (p.bio ? " has-bio" : ""),
                       transform: `translate(${pos.x},${pos.level * ROW_H + BOX_H / 2})`,
                       "data-person": p.id }, parent);
   el("rect", { x: -BOX_W / 2, y: -BOX_H / 2, width: BOX_W, height: BOX_H }, g);
-  el("title", {}, g).textContent = p.id;
+  // a second, inner border marks a person who also appears in another YAML file
+  if (p.also_in && p.also_in.length)
+    el("rect", { class: "inner", x: -BOX_W / 2 + 4, y: -BOX_H / 2 + 4, width: BOX_W - 8, height: BOX_H - 8 }, g);
+  if (!personTip(p)) el("title", {}, g).textContent = p.id;
   // nissaga convention: text after the last comma is the title, text before it a subtitle
   let raw = p.name || p.id, sub = null;
   const comma = raw.lastIndexOf(",");
@@ -279,7 +290,19 @@ function render() {
       const p = personPos[pid];
       if (!p) return;
       if (p.level === m.level) {
-        el("line", { class: "edge", x1: p.x, y1: cy(p.level), x2: m.x, y2: cy(m.level) }, edges);
+        if (m.owner === pid && m.slot >= 2) {
+          // Third and later marriages of a person: a "|------|" line over the row, so it
+          // does not run through the earlier spouses. It rises off-centre (the parents'
+          // line enters at the centre) and descends onto the marriage box beside the spouse.
+          // From the 5th marriage on, the lines may coincide.
+          const tier = Math.min(Math.floor(m.slot / 2) - 1, 1);
+          const top = p.level * ROW_H;
+          const ax = p.x + m.dir * (tier === 0 ? 42 : 26);
+          const hy = top - (tier === 0 ? 8 : 13);
+          el("path", { class: "edge", d: `M${ax},${top} V${hy} H${m.x} V${cy(m.level) - MBOX_H / 2}` }, edges);
+        } else {
+          el("line", { class: "edge", x1: p.x, y1: cy(p.level), x2: m.x, y2: cy(m.level) }, edges);
+        }
       } else {
         const up = p.level < m.level;
         const y1 = up ? p.level * ROW_H + BOX_H : p.level * ROW_H;
@@ -328,6 +351,7 @@ let drag = null;
 svg.addEventListener("mousedown", e => {
   if (e.button !== 0) return;
   hideMenu();
+  hideTip();
   drag = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y };
   svg.classList.add("panning");
 });
@@ -375,6 +399,7 @@ function showMenu(e, title, items) {
 
 svg.addEventListener("contextmenu", e => {
   e.preventDefault();
+  hideTip();
   const pe = e.target.closest("[data-person]");
   const me = e.target.closest("[data-marriage]");
   if (pe) {
@@ -383,6 +408,7 @@ svg.addEventListener("contextmenu", e => {
       ["Edit", () => editPerson(p)],
       ["Add spouse", () => addSpouse(p)],
       ["Select spouse", () => selectSpouse(p)],
+      ["Delete", () => deletePerson(p)],
     ]);
   } else if (me) {
     const f = tree.families[+me.dataset.marriage];
@@ -390,6 +416,7 @@ svg.addEventListener("contextmenu", e => {
       ["Edit", () => editMarriage(f)],
       ["Add child", () => addChild(f)],
       ["Select child", () => selectChild(f)],
+      ["Delete", () => deleteMarriage(f)],
     ]);
   } else {
     showMenu(e, null, [["Add person", addPerson]]);
@@ -476,6 +503,31 @@ function openForm({ title, note, fields, submitLabel, onSubmit }) {
 }
 
 const nameOf = p => p.name || p.id;
+
+// Person tooltip: biography and the other YAML file(s) the person appears in.
+const tip = document.getElementById("tip");
+
+function hideTip() { tip.style.display = "none"; }
+
+// Text for the tooltip; "" if there is nothing to show.
+function personTip(p) {
+  const parts = [];
+  if (p.bio) parts.push(p.bio);
+  if (p.also_in && p.also_in.length) parts.push("Also in: " + p.also_in.join(", "));
+  return parts.join("\n\n");
+}
+
+svg.addEventListener("mousemove", e => {
+  const pe = !drag && e.target.closest("[data-person]");
+  const text = pe ? personTip(tree.people[pe.dataset.person]) : "";
+  if (!text) { hideTip(); return; }
+  tip.textContent = text;
+  tip.style.display = "block";
+  tip.style.left = Math.max(4, Math.min(e.clientX + 14, window.innerWidth - tip.offsetWidth - 4)) + "px";
+  tip.style.top = Math.max(4, Math.min(e.clientY + 14, window.innerHeight - tip.offsetHeight - 4)) + "px";
+});
+svg.addEventListener("mouseleave", hideTip);
+svg.addEventListener("wheel", hideTip);
 const optionLabel = c => `${c.name || c.id} (${c.born ?? "?"}\u2013${c.died ?? ""}) \u2014 ${c.source_file}`;
 
 function editPerson(p) {
@@ -541,6 +593,34 @@ function marriageTitle(f) {
   return names.join(" & ") + " (" + (f.married ?? "?") + ")";
 }
 
+function deletePerson(p) {
+  const others = p.also_in || [];
+  let note = `Delete ${nameOf(p)} (${datesOf(p)}) from this file` + (others.length ? "" : " and from the database") +
+    ". Spouses and children are kept.";
+  if (others.length) note += ` The person also appears in ${others.join(", ")} and stays in the database.`;
+  else if (p.bio) note += " The biography is deleted too.";
+  openForm({
+    title: "Delete person",
+    note,
+    fields: [],
+    submitLabel: "Delete",
+    onSubmit: () => submitAndReload("/api/person/delete", { id: p.id }),
+  });
+}
+
+function deleteMarriage(f) {
+  const father = f.parents.map(id => tree.people[id]).find(p => p && p.gender === "M");
+  openForm({
+    title: "Delete marriage",
+    note: father
+      ? `Remove ${nameOf(father)} from the marriage ${marriageTitle(f)}. Nobody is deleted; children stay with the mother.`
+      : `Remove the marriage ${marriageTitle(f)}, which has no husband.`,
+    fields: [],
+    submitLabel: "Delete",
+    onSubmit: () => submitAndReload("/api/family/delete", { index: f.index }),
+  });
+}
+
 function editMarriage(f) {
   openForm({
     title: "Edit marriage: " + marriageTitle(f),
@@ -570,7 +650,7 @@ async function selectChild(f) {
     const { candidates } = await api("/api/child/candidates?index=" + f.index);
     openForm({
       title: "Select child of " + marriageTitle(f),
-      note: candidates.length ? "Persons without parents, born between the marriage and the first parent's death."
+      note: candidates.length ? "Persons without parents, born between the marriage year and the earliest of the parents' death and the divorce (inclusive)."
                               : "No suitable candidates found.",
       fields: candidates.length ? [{ name: "child_id", label: "Child", type: "list",
         options: candidates.map(c => ({ value: c.id, label: optionLabel(c) })) }] : [],

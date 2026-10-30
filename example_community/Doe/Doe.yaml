@@ -21,11 +21,6 @@ people:
     born: 1986
     gender: F
     name: Juliette Doe
-  P-2383263947:
-    born: 1950
-    gender: F
-    name: Ena Percival
-    died: 2015
   P-1599787197:
     born: 1975
     gender: M
@@ -86,10 +81,6 @@ people:
     born: 1991
     gender: M
     name: Robert Doe
-  P-994341760:
-    born: 1960
-    gender: F
-    name: Eva Nameless
 families:
 - parents:
   - P-2048827757
@@ -100,14 +91,8 @@ families:
   - P-2098087726
   - P-2996072380
   - P-2504158111
-  divorced: 1990
-- parents:
-  - P-2048827757
-  - P-2383263947
-  married: 1991
-  children:
   - P-1546793139
-  divorced: 1993
+  divorced: 1990
 - parents:
   - P-3264204871
   - P-1599787197
@@ -143,7 +128,3 @@ families:
   married: 2016
   children:
   - P-3929718469
-- parents:
-  - P-2048827757
-  - P-994341760
-  married: 1995
