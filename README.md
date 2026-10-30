@@ -1,0 +1,2 @@
+# rodoslov
+Lightweight genealogy package
