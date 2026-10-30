@@ -1,5 +1,5 @@
 # Example config for faker: generation from an extendable file
-# Run "python faker.py example_community/Smith" to regenerate Smith.yaml
+# Run "rodoslov-faker example_community/Smith" to regenerate Smith.yaml
 extend: "_extend.yaml"
 
 majorat: false

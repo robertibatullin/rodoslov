@@ -1,3 +1,5 @@
+"""sqlite_client.py - Read/write access to a community's genealogy.db."""
+
 import sqlite3
 from pathlib import Path
 
@@ -8,16 +10,20 @@ SQLITE_DB_FILENAME = "genealogy.db"
 
 
 class GenealogySQLiteClient:
+    """Thin query helper around the genealogy.db built by yaml_to_sqlite."""
+
     def __init__(self, db_path: str | Path):
         self.db_path = db_path
 
     def query(self, sql: str, params: dict | None = None) -> pd.DataFrame:
+        """Run a read-only SQL query and return the result as a DataFrame."""
         conn = sqlite3.connect(self.db_path)
         df = pd.read_sql_query(sql, conn, params=params)
         conn.close()
         return df
 
     def find_living(self, year: int) -> pd.DataFrame:
+        """People alive in `year` (born on or before it, not yet dead)."""
         sql = """
             SELECT id, name, gender, born, died, source_file
             FROM people
@@ -32,6 +38,7 @@ class GenealogySQLiteClient:
             min_age: int,
             max_age: int
             ) -> pd.DataFrame: 
+        """People of `gender` aged between `min_age` and `max_age` in `year` who are alive and not married then."""
         min_birth_year = year - max_age
         max_birth_year = year - min_age
         sql = """
@@ -56,6 +63,7 @@ class GenealogySQLiteClient:
         })
 
     def find_surnames(self, *surnames: str) -> pd.DataFrame:
+        """People whose name ends with any of the given surnames."""
         sql = f"""
         SELECT id, name, born, died, source_file
         FROM   people
@@ -90,9 +98,9 @@ class GenealogySQLiteClient:
         if len(kwarg_keys) != 1 or kwarg_keys[0] not in ["name", "id"]:
             raise ValueError("You must provide exactly one of 'name' or 'id' as a keyword argument.")
         if "name" in kwargs:
-            condition = f'p.name = {kwargs["name"]!r}'
+            condition = "p.name = :value"
         else:
-            condition = f'p.id = {kwargs["id"]!r}'
+            condition = "p.id = :value"
 
         sql = f"""
         SELECT 'self'   AS relation, p.id, p.name, p.gender, p.born, p.died,
@@ -144,4 +152,4 @@ class GenealogySQLiteClient:
         JOIN   people child       ON child.id = fc.person_id
         WHERE  {condition}
         """
-        return self.query(sql)
+        return self.query(sql, {"value": kwargs[kwarg_keys[0]]})

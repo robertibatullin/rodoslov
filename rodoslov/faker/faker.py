@@ -5,7 +5,7 @@ rolling a probability each year for death, marriage, and (while married)
 childbirth.
 
 Usage:
-    python faker.py <lineage_dir> [--config FILE] [--seed SEED] [--cutoff YEAR]
+    rodoslov-faker <lineage_dir> [--config FILE] [--seed SEED] [--cutoff YEAR]
 
     Arguments:
         lineage_dir  Directory holding this lineage's config.yaml (see
@@ -19,9 +19,9 @@ Usage:
         --cutoff YEAR   Stop generating beyond this year (default: current year)
 
 Examples:
-    python faker.py example_community/Smith
-    python faker.py example_community/Smith --seed 99
-    python faker.py example_community/Smith --config custom_config.yaml --cutoff 1980
+    rodoslov-faker example_community/Smith
+    rodoslov-faker example_community/Smith --seed 99
+    rodoslov-faker example_community/Smith --config custom_config.yaml --cutoff 1980
 
 """
 
@@ -53,6 +53,7 @@ def path_hash(file_path: str, seed: int = 0, modulus: int = 2**31 - 1) -> int:
 
 @dataclass
 class PersonRecord:
+    """Simulation-side state of one person (the output YAML holds only `people` dicts)."""
     id: str
     gender: str
     born: int
@@ -161,6 +162,7 @@ class GenealogyFaker:
 
     @staticmethod
     def _century(year: int) -> int:
+        """Ordinal century of `year` (1850 -> 19, 1900 -> 19, 1901 -> 20)."""
         return (year - 1) // 100 + 1
 
     def _demography_config_value(self, key: str, year: int):
@@ -304,6 +306,7 @@ class GenealogyFaker:
         )
 
     def _record_death(self, person: PersonRecord, year: int):
+        """Set the death year on both the record and the output people dict."""
         person.died = year
         self.people[person.id]["died"] = year
 
@@ -662,6 +665,7 @@ def _resolve_name_source(name_sources: dict, key: str) -> str | None:
 
 
 def main():
+    """Command-line entry point: `rodoslov-faker <lineage_dir> ...`."""
     parser = argparse.ArgumentParser(
         description="Generate a fake family tree in nissaga-compatible YAML format."
     )

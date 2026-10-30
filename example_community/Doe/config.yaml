@@ -1,5 +1,5 @@
 # Example config for faker: generation from a progenitor
-# Run "python faker.py example_community/Doe" to regenerate Doe.yaml
+# Run "rodoslov-faker example_community/Doe" to regenerate Doe.yaml
 progenitor:
   birth_year: 1950
   gender: M

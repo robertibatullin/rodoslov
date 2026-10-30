@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rodoslov"
+version = "0.0.0"
+description = "Lightweight genealogy package: YAML files, SQLite database, browser GUI and a fake family tree generator."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+dependencies = [
+    "pyyaml",
+    "pandas",
+    "flask",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.scripts]
+rodoslov-faker = "rodoslov.faker.faker:main"
+rodoslov-gui = "rodoslov.manager.gui:main"
+rodoslov-sync = "rodoslov.manager.yaml_to_sqlite:main"
+
+[tool.setuptools.packages.find]
+include = ["rodoslov*"]
+
+[tool.setuptools.package-data]
+"rodoslov.faker" = ["default_config.yaml"]
+"rodoslov.manager" = ["gui.html"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

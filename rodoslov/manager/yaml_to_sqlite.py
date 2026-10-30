@@ -1,4 +1,14 @@
+"""yaml_to_sqlite.py - Build a community's genealogy.db from its lineage YAML files.
+
+Usage:
+    rodoslov-sync <community_dir>
+
+All *.yaml / *.yml files under the community directory (except those whose
+name ends in "_extend") are merged and written to <community_dir>/genealogy.db.
+"""
+
 import sqlite3
+import sys
 from pathlib import Path
 
 import yaml
@@ -28,7 +38,13 @@ def _family_key(fam: dict) -> tuple:
 
 
 def yaml_to_sqlite(community_dir: str | Path) -> None:
-    """Recursively scan *.yaml / *.yml and load genealogical data into SQLite."""
+    """Recursively scan *.yaml / *.yml and load genealogical data into SQLite.
+
+    Rebuilds the people / families / family_children tables of
+    `<community_dir>/genealogy.db` (the hand-written biographies table is
+    preserved). A person appearing in several files is merged; the same id
+    with a different name, gender or birth year raises ValueError.
+    """
     root = Path(community_dir).resolve()
     conn = sqlite3.connect(str(root / SQLITE_DB_FILENAME))
     cur = conn.cursor()
@@ -139,11 +155,13 @@ def yaml_to_sqlite(community_dir: str | Path) -> None:
     print(f"  -> {root / SQLITE_DB_FILENAME}  ({size_kb:.1f} KB)")
 
 
-if __name__ == "__main__":
-    import sys
-
+def main() -> None:
+    """Command-line entry point: `rodoslov-sync <community_dir>`."""
     if len(sys.argv) != 2:
-        print("Usage: python yaml_to_sqlite.py <community_dir>")
+        print("Usage: rodoslov-sync <community_dir>")
         sys.exit(1)
-    community_dir = sys.argv[1]
-    yaml_to_sqlite(community_dir)
+    yaml_to_sqlite(sys.argv[1])
+
+
+if __name__ == "__main__":
+    main()

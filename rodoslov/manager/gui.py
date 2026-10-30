@@ -1,7 +1,7 @@
 """gui.py - Browser GUI for manually editing a genealogy YAML file.
 
 Usage:
-    python genealogy/gui.py genealogy_file.yaml [--port 5000] [--no-browser]
+    rodoslov-gui lineage_file.yaml [--port 5000] [--no-browser]
 
 Renders the family tree of the given nissaga-style YAML file (people +
 families) in the browser, and lets you edit it with right-click menus:
@@ -26,8 +26,8 @@ from pathlib import Path
 import yaml
 from flask import Flask, jsonify, request, send_file
 
-from sqlite_client import GenealogySQLiteClient
-from yaml_to_sqlite import yaml_to_sqlite, SQLITE_DB_FILENAME
+from rodoslov.manager.sqlite_client import GenealogySQLiteClient
+from rodoslov.manager.yaml_to_sqlite import yaml_to_sqlite, SQLITE_DB_FILENAME
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -42,7 +42,7 @@ ALLOWED_HOSTS: set[str] = set()
 
 
 class ApiError(Exception):
-    pass
+    """Invalid request; reported to the browser as a 400 JSON error."""
 
 
 @app.errorhandler(ApiError)
@@ -61,6 +61,7 @@ def _check_host():
 # ── YAML / DB helpers ─────────────────────────────────────────
 
 def load_data() -> dict:
+    """Read the edited YAML file; always returns dict with "people" and "families" keys."""
     with open(YAML_FILE, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
     if not data.get("people"):
@@ -71,6 +72,7 @@ def load_data() -> dict:
 
 
 def save_data(data: dict) -> None:
+    """Atomically write `data` to the edited YAML file."""
     # Keep the file's existing line-ending style so edits don't rewrite every line.
     newline = "\r\n" if b"\r\n" in YAML_FILE.read_bytes() else "\n"
     tmp = YAML_FILE.with_suffix(YAML_FILE.suffix + ".tmp")
@@ -80,7 +82,7 @@ def save_data(data: dict) -> None:
 
 
 def sync_db() -> str | None:
-    """Run yaml_to_sqlite.py; return a warning string on failure, else None."""
+    """Rebuild genealogy.db from the YAML files; return a warning string on failure, else None."""
     try:
         yaml_to_sqlite(DB_PATH.parent)
     except Exception as e:
@@ -89,12 +91,14 @@ def sync_db() -> str | None:
 
 
 def finish(data: dict, **extra):
+    """Save the YAML, sync the database and build the success JSON response."""
     save_data(data)
     warning = sync_db()
     return jsonify(ok=True, warning=warning, **extra)
 
 
 def db_person(pid: str) -> dict | None:
+    """Look up a person in the database by id; None if absent."""
     conn = sqlite3.connect(DB_PATH)
     try:
         row = conn.execute(
@@ -108,7 +112,7 @@ def db_person(pid: str) -> dict | None:
 
 
 def new_id(data: dict) -> str:
-    """A fresh "P-<number>" id (as in genealogy.py) absent from the YAML and the DB."""
+    """A fresh "P-<number>" id absent from both the YAML and the database."""
     conn = sqlite3.connect(DB_PATH)
     try:
         while True:
@@ -122,6 +126,7 @@ def new_id(data: dict) -> str:
 
 
 def person_entry(name: str, gender: str, born: int, died: int | None) -> dict:
+    """Build a YAML person dict, omitting empty name / death year."""
     entry = {"born": born, "gender": gender}
     if name:
         entry["name"] = name
@@ -144,6 +149,7 @@ def import_person(data: dict, pid: str) -> None:
 # ── Input parsing ─────────────────────────────────────────────
 
 def body() -> dict:
+    """The JSON object of the current request, or ApiError."""
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
         raise ApiError("Expected a JSON body")
@@ -151,6 +157,7 @@ def body() -> dict:
 
 
 def year_of(value, label: str, required: bool = False) -> int | None:
+    """Parse a year (1..3000) from a request value; None if blank and not required."""
     if value is None or (isinstance(value, str) and not value.strip()):
         if required:
             raise ApiError(f"{label} is required")
@@ -165,21 +172,25 @@ def year_of(value, label: str, required: bool = False) -> int | None:
 
 
 def text_of(value) -> str:
+    """Stripped string of a request value (empty for None)."""
     return str(value or "").strip()
 
 
 def gender_of(value) -> str:
+    """Validate gender is "M" or "F"."""
     if value not in ("M", "F"):
         raise ApiError("Gender must be M or F")
     return value
 
 
 def check_lifespan(born: int | None, died: int | None) -> None:
+    """Raise ApiError if death precedes birth."""
     if born is not None and died is not None and died < born:
         raise ApiError("Death year is before birth year")
 
 
 def get_person(data: dict, pid) -> dict:
+    """The person dict for `pid`, or ApiError if unknown."""
     person = data["people"].get(pid)
     if person is None:
         raise ApiError(f"Unknown person {pid}")
@@ -187,6 +198,7 @@ def get_person(data: dict, pid) -> dict:
 
 
 def get_family(data: dict, index) -> dict:
+    """The family at list position `index`, or ApiError if invalid."""
     try:
         return data["families"][int(index)]
     except (ValueError, TypeError, IndexError):
@@ -194,6 +206,7 @@ def get_family(data: dict, index) -> dict:
 
 
 def check_married_within(person: dict, married: int, label: str) -> None:
+    """Raise ApiError if the marriage year is outside the person's lifespan."""
     born, died = person.get("born"), person.get("died")
     if born is not None and married < born:
         raise ApiError(f"Marriage is before the birth of {label}")
@@ -202,6 +215,7 @@ def check_married_within(person: dict, married: int, label: str) -> None:
 
 
 def df_records(df) -> list[dict]:
+    """DataFrame to JSON-safe records (NaN -> None, born/died -> int)."""
     records = []
     for row in df.to_dict("records"):
         rec = {}
