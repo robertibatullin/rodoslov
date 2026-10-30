@@ -1,0 +1,587 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Genealogy editor</title>
+<style>
+  html, body { margin: 0; height: 100%; font-family: "Segoe UI", Arial, sans-serif; overflow: hidden; background: #fafaf7; }
+  #bar { position: fixed; top: 0; left: 0; right: 0; height: 28px; line-height: 28px; padding: 0 10px;
+         background: #333; color: #eee; font-size: 13px; z-index: 5; }
+  #bar span { opacity: .7; margin-left: 14px; }
+  svg { position: fixed; top: 28px; left: 0; width: 100%; height: calc(100% - 28px); cursor: grab; }
+  svg.panning { cursor: grabbing; }
+  .person rect { stroke-width: 1.5; rx: 4; }
+  .person.M rect { fill: #dbe8f7; stroke: #5b87c5; }
+  .person.F rect { fill: #f7dbe6; stroke: #c55b8a; }
+  .person.U rect { fill: #eee; stroke: #888; }
+  .marriage rect { fill: #fff8dc; stroke: #b9a24a; stroke-width: 1.2; rx: 10; }
+  .person:hover rect, .marriage:hover rect { stroke-width: 3; }
+  text { font-size: 12px; fill: #222; pointer-events: none; text-anchor: middle; }
+  text.title { font-weight: 600; }
+  text.sub { font-size: 10px; fill: #555; }
+  text.dates { font-size: 11px; fill: #444; }
+  text.mdate { font-size: 11px; }
+  path.edge, line.edge { fill: none; stroke: #777; stroke-width: 1.3; }
+  #menu { position: fixed; display: none; background: #fff; border: 1px solid #888; border-radius: 4px; z-index: 20;
+          box-shadow: 2px 3px 8px rgba(0,0,0,.3); min-width: 150px; padding: 3px 0; }
+  #menu div { padding: 6px 14px; font-size: 13px; cursor: pointer; }
+  #menu div:hover { background: #dde9fb; }
+  #menu div.head { font-weight: 600; color: #555; cursor: default; background: #f0f0f0; }
+  .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 30; display: flex; align-items: center; justify-content: center; }
+  .dialog { background: #fff; border-radius: 6px; padding: 16px 20px; min-width: 340px; max-width: 560px; box-shadow: 0 6px 24px rgba(0,0,0,.4); }
+  .dialog h3 { margin: 0 0 12px; font-size: 16px; }
+  .dialog label { display: block; margin-bottom: 9px; font-size: 13px; }
+  .dialog label span { display: block; margin-bottom: 2px; color: #444; }
+  .dialog input, .dialog select { width: 100%; box-sizing: border-box; padding: 5px; font-size: 14px; }
+  .dialog .note { font-size: 12px; color: #666; margin-bottom: 8px; }
+  .dialog .err { color: #b00020; font-size: 13px; margin: 6px 0; min-height: 1em; }
+  .dialog .btns { text-align: right; margin-top: 8px; }
+  .dialog button { padding: 5px 16px; font-size: 14px; margin-left: 8px; cursor: pointer; }
+  #toast { position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%); background: #333; color: #fff;
+           padding: 8px 16px; border-radius: 4px; font-size: 13px; z-index: 40; display: none; }
+  #toast.warn { background: #b00020; }
+</style>
+</head>
+<body>
+<div id="bar">Genealogy editor: <b id="fname"></b><span>right-click a person, a marriage box or an empty area; drag to pan, wheel to zoom</span></div>
+<svg id="svg"><g id="viewport"></g></svg>
+<div id="menu"></div>
+<div id="toast"></div>
+
+<script>
+"use strict";
+const NS = "http://www.w3.org/2000/svg";
+const BOX_W = 150, BOX_H = 58, MBOX_W = 72, MBOX_H = 38, GAP = 18, ROW_H = 140, BLOCK_GAP = 28, ROOT_GAP = 70, BUS = 24;
+
+let tree = null;
+let view = { x: 0, y: 0, k: 1 };
+let firstRender = true;
+
+// ── API ──────────────────────────────────────────────────────
+async function api(path, payload) {
+  const opts = payload === undefined ? {} : {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) };
+  const resp = await fetch(path, opts);
+  const json = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(json.error || resp.statusText);
+  return json;
+}
+
+async function loadTree() {
+  tree = await api("/api/tree");
+  document.getElementById("fname").textContent = tree.file;
+  render();
+}
+
+function toast(msg, warn) {
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.className = warn ? "warn" : "";
+  t.style.display = "block";
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => { t.style.display = "none"; }, warn ? 6000 : 1800);
+}
+
+async function submitAndReload(path, payload) {
+  const res = await api(path, payload);
+  await loadTree();
+  if (res.warning) toast(res.warning, true); else toast("Saved");
+}
+
+// ── Layout ───────────────────────────────────────────────────
+function layout(tree) {
+  const people = tree.people, fams = tree.families;
+  const parentFam = {};
+  fams.forEach(f => f.children.forEach(c => { if (!(c in parentFam)) parentFam[c] = f; }));
+  const marriagesOf = {};
+  fams.forEach(f => f.parents.forEach(p => { (marriagesOf[p] = marriagesOf[p] || []).push(f); }));
+  Object.values(marriagesOf).forEach(l => l.sort((a, b) => (a.married ?? 1e9) - (b.married ?? 1e9)));
+  const spouseOf = (f, p) => f.parents.find(x => x !== p);
+  const bornOf = id => (people[id] && people[id].born) ?? 0;
+
+  const visited = new Set(), marriagePlaced = new Set(), levelOf = {};
+  const half = it => (it.kind === "person" ? BOX_W : MBOX_W) / 2;
+
+  function buildBlock(pid, level) {
+    visited.add(pid);
+    levelOf[pid] = level;
+    const row = [{ kind: "person", id: pid, x: 0, level }];
+    const placed = [];
+    let rc = BOX_W / 2, lc = -BOX_W / 2;
+    (marriagesOf[pid] || []).filter(f => !marriagePlaced.has(f.index)).forEach((f, i) => {
+      marriagePlaced.add(f.index);
+      const dir = i % 2 === 0 ? 1 : -1;
+      let cur = dir > 0 ? rc : lc;
+      const mx = cur + dir * (GAP + MBOX_W / 2);
+      const m = { kind: "marriage", idx: f.index, x: mx, level };
+      row.push(m);
+      cur = mx + dir * (MBOX_W / 2);
+      const sid = spouseOf(f, pid);
+      if (sid && people[sid] && !visited.has(sid) && !parentFam[sid]) {
+        visited.add(sid);
+        levelOf[sid] = level;
+        row.push({ kind: "person", id: sid, x: cur + dir * (GAP + BOX_W / 2), level });
+        cur += dir * (GAP + BOX_W);
+      }
+      if (dir > 0) rc = cur; else lc = cur;
+      placed.push({ fam: f, item: m });
+    });
+
+    // Children are laid out left to right in the same order as their marriage
+    // boxes, so that lines from different marriages never cross.
+    placed.sort((a, b) => a.item.x - b.item.x);
+    const kidItems = [], groups = [];
+    let gcur = 0;
+    for (const { fam, item } of placed) {
+      const kids = fam.children.filter(c => people[c]).sort((a, b) => bornOf(a) - bornOf(b));
+      let firstX = null, lastX = null;
+      for (const c of kids) {
+        if (visited.has(c)) continue;
+        const b = buildBlock(c, level + 1);
+        const shift = gcur - b.minX;
+        b.items.forEach(it => { it.x += shift; kidItems.push(it); });
+        const rx = b.rootX + shift;
+        if (firstX === null) firstX = rx;
+        lastX = rx;
+        gcur += (b.maxX - b.minX) + BLOCK_GAP;
+      }
+      if (firstX !== null) groups.push({ item, center: (firstX + lastX) / 2 });
+    }
+    if (groups.length) {
+      const rowShift = groups.reduce((s, g) => s + g.center - g.item.x, 0) / groups.length;
+      row.forEach(it => { it.x += rowShift; });
+    }
+    const items = row.concat(kidItems);
+    return {
+      items, rootX: row[0].x,
+      minX: Math.min(...items.map(it => it.x - half(it))),
+      maxX: Math.max(...items.map(it => it.x + half(it))),
+    };
+  }
+
+  const order = Object.keys(people).sort((a, b) => bornOf(a) - bornOf(b));
+  const isRoot = pid => !parentFam[pid] &&
+    !(marriagesOf[pid] || []).some(f => { const s = spouseOf(f, pid); return s && people[s] && parentFam[s]; });
+  const blocks = [];
+  order.filter(pid => !visited.has(pid) && isRoot(pid)).forEach(pid => {
+    if (!visited.has(pid)) blocks.push(buildBlock(pid, 0));
+  });
+  order.forEach(pid => {
+    if (visited.has(pid)) return;
+    let lvl = 0;
+    const pf = parentFam[pid];
+    const known = pf && pf.parents.find(p => p in levelOf);
+    if (known) lvl = levelOf[known] + 1;
+    else {
+      const sp = (marriagesOf[pid] || []).map(f => spouseOf(f, pid)).find(s => s in levelOf);
+      if (sp) lvl = levelOf[sp];
+    }
+    blocks.push(buildBlock(pid, lvl));
+  });
+
+  const personPos = {}, marriagePos = {};
+  let cursor = 0;
+  for (const b of blocks) {
+    const shift = cursor - b.minX;
+    b.items.forEach(it => {
+      it.x += shift;
+      if (it.kind === "person") personPos[it.id] = it; else marriagePos[it.idx] = it;
+    });
+    cursor += (b.maxX - b.minX) + ROOT_GAP;
+  }
+  fams.forEach(f => {
+    if (f.index in marriagePos) return;
+    const ps = f.parents.map(p => personPos[p]).filter(Boolean);
+    if (!ps.length) return;
+    marriagePos[f.index] = {
+      kind: "marriage", idx: f.index,
+      x: ps.reduce((s, p) => s + p.x, 0) / ps.length,
+      level: Math.max(...ps.map(p => p.level)),
+    };
+  });
+  return { personPos, marriagePos };
+}
+
+// ── Rendering ────────────────────────────────────────────────
+function el(name, attrs, parent) {
+  const e = document.createElementNS(NS, name);
+  for (const k in attrs || {}) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+
+function textLine(parent, cls, y, str) {
+  const t = el("text", { class: cls, x: 0, y }, parent);
+  t.textContent = str;
+}
+
+function wrap(str, max) {
+  const words = str.split(/\s+/).filter(Boolean);
+  if (words.length < 2 || str.length <= max) return [str];
+  let best = 1, bestDiff = Infinity;
+  for (let i = 1; i < words.length; i++) {
+    const diff = Math.abs(words.slice(0, i).join(" ").length - words.slice(i).join(" ").length);
+    if (diff < bestDiff) { best = i; bestDiff = diff; }
+  }
+  return [words.slice(0, best).join(" "), words.slice(best).join(" ")];
+}
+
+function datesOf(p) {
+  return (p.born ?? "?") + " \u2013 " + (p.died ?? "");
+}
+
+function drawPerson(parent, p, pos) {
+  const g = el("g", { class: "person " + (p.gender === "M" || p.gender === "F" ? p.gender : "U"),
+                      transform: `translate(${pos.x},${pos.level * ROW_H + BOX_H / 2})`,
+                      "data-person": p.id }, parent);
+  el("rect", { x: -BOX_W / 2, y: -BOX_H / 2, width: BOX_W, height: BOX_H }, g);
+  el("title", {}, g).textContent = p.id;
+  // nissaga convention: text after the last comma is the title, text before it a subtitle
+  let raw = p.name || p.id, sub = null;
+  const comma = raw.lastIndexOf(",");
+  if (comma >= 0) { sub = raw.slice(0, comma).trim(); raw = raw.slice(comma + 1).trim(); }
+  const lines = [];
+  if (sub) lines.push(["sub", sub]);
+  wrap(raw, 20).forEach(l => lines.push(["title", l]));
+  lines.push(["dates", datesOf(p)]);
+  const lh = 14, top = -(lines.length * lh) / 2 + 11;
+  lines.forEach(([cls, s], i) => textLine(g, cls, top + i * lh, s));
+}
+
+function drawMarriage(parent, f, pos) {
+  const g = el("g", { class: "marriage", transform: `translate(${pos.x},${pos.level * ROW_H + BOX_H / 2})`,
+                      "data-marriage": f.index }, parent);
+  el("rect", { x: -MBOX_W / 2, y: -MBOX_H / 2, width: MBOX_W, height: MBOX_H }, g);
+  const lines = ["\u26AD " + (f.married ?? "?")];
+  if (f.divorced != null) lines.push("\u26AE " + f.divorced);
+  const top = lines.length === 1 ? 4 : -2;
+  lines.forEach((s, i) => textLine(g, "mdate", top + i * 14, s));
+}
+
+function render() {
+  const vp = document.getElementById("viewport");
+  vp.textContent = "";
+  const { personPos, marriagePos } = layout(tree);
+  const edges = el("g", {}, vp), boxes = el("g", {}, vp);
+  const cy = lvl => lvl * ROW_H + BOX_H / 2;
+
+  // Give neighbouring marriages on the same row different bus heights, so the
+  // horizontal child lines of different marriages never merge into one line.
+  const busStep = {};
+  const rows = {};
+  Object.values(marriagePos).forEach(m => { (rows[m.level] = rows[m.level] || []).push(m); });
+  Object.values(rows).forEach(r => r.sort((a, b) => a.x - b.x).forEach((m, i) => { busStep[m.idx] = i % 3; }));
+
+  tree.families.forEach(f => {
+    const m = marriagePos[f.index];
+    if (!m) return;
+    f.parents.forEach(pid => {
+      const p = personPos[pid];
+      if (!p) return;
+      if (p.level === m.level) {
+        el("line", { class: "edge", x1: p.x, y1: cy(p.level), x2: m.x, y2: cy(m.level) }, edges);
+      } else {
+        const up = p.level < m.level;
+        const y1 = up ? p.level * ROW_H + BOX_H : p.level * ROW_H;
+        const y2 = cy(m.level) + (up ? -MBOX_H / 2 : MBOX_H / 2);
+        const mid = (y1 + y2) / 2;
+        el("path", { class: "edge", d: `M${p.x},${y1} C${p.x},${mid} ${m.x},${mid} ${m.x},${y2}` }, edges);
+      }
+    });
+    f.children.forEach(cid => {
+      const c = personPos[cid];
+      if (!c) return;
+      const y1 = cy(m.level) + MBOX_H / 2, y2 = c.level * ROW_H;
+      if (y2 <= y1) {
+        el("line", { class: "edge", x1: m.x, y1, x2: c.x, y2: y2 + BOX_H / 2 }, edges);
+      } else {
+        const bus = y2 - BUS + busStep[m.idx] * 7;
+        el("path", { class: "edge", d: `M${m.x},${y1} V${bus} H${c.x} V${y2}` }, edges);
+      }
+    });
+  });
+  tree.families.forEach(f => { if (marriagePos[f.index]) drawMarriage(boxes, f, marriagePos[f.index]); });
+  Object.keys(personPos).forEach(id => drawPerson(boxes, tree.people[id], personPos[id]));
+
+  if (firstRender) { fitView(personPos, marriagePos); firstRender = false; }
+  applyView();
+}
+
+// ── Pan / zoom ───────────────────────────────────────────────
+const svg = document.getElementById("svg");
+
+function applyView() {
+  document.getElementById("viewport").setAttribute("transform", `translate(${view.x},${view.y}) scale(${view.k})`);
+}
+
+function fitView(personPos, marriagePos) {
+  const pts = Object.values(personPos).concat(Object.values(marriagePos));
+  if (!pts.length) { view = { x: 40, y: 40, k: 1 }; return; }
+  const minX = Math.min(...pts.map(p => p.x)) - BOX_W / 2, maxX = Math.max(...pts.map(p => p.x)) + BOX_W / 2;
+  const maxY = Math.max(...pts.map(p => p.level)) * ROW_H + BOX_H;
+  const w = svg.clientWidth, h = svg.clientHeight;
+  const k = Math.min(1, (w - 40) / (maxX - minX), (h - 40) / maxY);
+  view = { k, x: (w - (maxX - minX) * k) / 2 - minX * k, y: 20 };
+}
+
+let drag = null;
+svg.addEventListener("mousedown", e => {
+  if (e.button !== 0) return;
+  hideMenu();
+  drag = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y };
+  svg.classList.add("panning");
+});
+window.addEventListener("mousemove", e => {
+  if (!drag) return;
+  view.x = drag.vx + e.clientX - drag.x;
+  view.y = drag.vy + e.clientY - drag.y;
+  applyView();
+});
+window.addEventListener("mouseup", () => { drag = null; svg.classList.remove("panning"); });
+svg.addEventListener("wheel", e => {
+  e.preventDefault();
+  const rect = svg.getBoundingClientRect();
+  const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  const k = Math.min(3, Math.max(0.1, view.k * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
+  view.x = mx - (mx - view.x) * k / view.k;
+  view.y = my - (my - view.y) * k / view.k;
+  view.k = k;
+  applyView();
+}, { passive: false });
+
+// ── Context menu ─────────────────────────────────────────────
+const menu = document.getElementById("menu");
+
+function hideMenu() { menu.style.display = "none"; }
+
+function showMenu(e, title, items) {
+  menu.textContent = "";
+  if (title) {
+    const h = document.createElement("div");
+    h.className = "head";
+    h.textContent = title;
+    menu.appendChild(h);
+  }
+  items.forEach(([label, fn]) => {
+    const d = document.createElement("div");
+    d.textContent = label;
+    d.addEventListener("click", () => { hideMenu(); fn(); });
+    menu.appendChild(d);
+  });
+  menu.style.display = "block";
+  menu.style.left = Math.min(e.clientX, window.innerWidth - menu.offsetWidth - 4) + "px";
+  menu.style.top = Math.min(e.clientY, window.innerHeight - menu.offsetHeight - 4) + "px";
+}
+
+svg.addEventListener("contextmenu", e => {
+  e.preventDefault();
+  const pe = e.target.closest("[data-person]");
+  const me = e.target.closest("[data-marriage]");
+  if (pe) {
+    const p = tree.people[pe.dataset.person];
+    showMenu(e, p.name || p.id, [
+      ["Edit", () => editPerson(p)],
+      ["Add spouse", () => addSpouse(p)],
+      ["Select spouse", () => selectSpouse(p)],
+    ]);
+  } else if (me) {
+    const f = tree.families[+me.dataset.marriage];
+    showMenu(e, "Marriage " + (f.married ?? "?"), [
+      ["Edit", () => editMarriage(f)],
+      ["Add child", () => addChild(f)],
+      ["Select child", () => selectChild(f)],
+    ]);
+  } else {
+    showMenu(e, null, [["Add person", addPerson]]);
+  }
+});
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape") { hideMenu(); const o = [...document.querySelectorAll(".overlay")].pop(); if (o) o.remove(); }
+});
+
+// ── Dialogs ──────────────────────────────────────────────────
+function openForm({ title, note, fields, submitLabel, onSubmit }) {
+  const overlay = document.createElement("div");
+  overlay.className = "overlay";
+  const dlg = document.createElement("form");
+  dlg.className = "dialog";
+  const h = document.createElement("h3");
+  h.textContent = title;
+  dlg.appendChild(h);
+  if (note) {
+    const n = document.createElement("div");
+    n.className = "note";
+    n.textContent = note;
+    dlg.appendChild(n);
+  }
+  const inputs = {};
+  fields.forEach(f => {
+    const lab = document.createElement("label");
+    const sp = document.createElement("span");
+    sp.textContent = f.label;
+    lab.appendChild(sp);
+    let inp;
+    if (f.type === "select" || f.type === "list") {
+      inp = document.createElement("select");
+      if (f.type === "list") inp.size = 12;
+      f.options.forEach(o => {
+        const opt = document.createElement("option");
+        opt.value = o.value;
+        opt.textContent = o.label;
+        inp.appendChild(opt);
+      });
+    } else {
+      inp = document.createElement("input");
+      inp.type = f.type === "number" ? "number" : "text";
+      if (f.type === "number") inp.step = "1";
+    }
+    if (f.value !== undefined && f.value !== null) inp.value = f.value;
+    inputs[f.name] = inp;
+    lab.appendChild(inp);
+    dlg.appendChild(lab);
+  });
+  const err = document.createElement("div");
+  err.className = "err";
+  dlg.appendChild(err);
+  const btns = document.createElement("div");
+  btns.className = "btns";
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.textContent = "Cancel";
+  cancel.addEventListener("click", () => overlay.remove());
+  btns.appendChild(cancel);
+  if (onSubmit) {
+    const ok = document.createElement("button");
+    ok.type = "submit";
+    ok.textContent = submitLabel || "OK";
+    btns.appendChild(ok);
+  }
+  dlg.appendChild(btns);
+  dlg.addEventListener("submit", async ev => {
+    ev.preventDefault();
+    const values = {};
+    for (const k in inputs) values[k] = inputs[k].value;
+    err.textContent = "";
+    try {
+      await onSubmit(values);
+      overlay.remove();
+    } catch (ex) {
+      err.textContent = ex.message;
+    }
+  });
+  overlay.appendChild(dlg);
+  document.body.appendChild(overlay);
+  const first = dlg.querySelector("input, select");
+  if (first) first.focus();
+}
+
+const nameOf = p => p.name || p.id;
+const optionLabel = c => `${c.name || c.id} (${c.born ?? "?"}\u2013${c.died ?? ""}) \u2014 ${c.source_file}`;
+
+function editPerson(p) {
+  openForm({
+    title: "Edit " + nameOf(p),
+    fields: [
+      { name: "name", label: "Name", type: "text", value: p.name || "" },
+      { name: "born", label: "Birth year", type: "number", value: p.born ?? "" },
+      { name: "died", label: "Death year (optional)", type: "number", value: p.died ?? "" },
+    ],
+    onSubmit: v => submitAndReload("/api/person/edit", { id: p.id, ...v }),
+  });
+}
+
+function addPerson() {
+  openForm({
+    title: "Add person",
+    fields: [
+      { name: "name", label: "Name", type: "text" },
+      { name: "gender", label: "Gender", type: "select", options: [{ value: "M", label: "M" }, { value: "F", label: "F" }] },
+      { name: "born", label: "Birth year", type: "number" },
+      { name: "died", label: "Death year (optional)", type: "number" },
+    ],
+    onSubmit: v => submitAndReload("/api/person/add", v),
+  });
+}
+
+function addSpouse(p) {
+  openForm({
+    title: "Add spouse to " + nameOf(p),
+    fields: [
+      { name: "name", label: "Spouse name", type: "text" },
+      { name: "born", label: "Birth year", type: "number" },
+      { name: "died", label: "Death year (optional)", type: "number" },
+      { name: "married", label: "Marriage year", type: "number" },
+    ],
+    onSubmit: v => submitAndReload("/api/spouse/add", { person_id: p.id, ...v }),
+  });
+}
+
+function selectSpouse(p) {
+  openForm({
+    title: "Select spouse for " + nameOf(p),
+    fields: [{ name: "married", label: "Marriage year", type: "number" }],
+    submitLabel: "Next",
+    onSubmit: async v => {
+      const q = new URLSearchParams({ person_id: p.id, year: v.married });
+      const { candidates } = await api("/api/spouse/candidates?" + q);
+      openForm({
+        title: `Unmarried ${p.gender === "M" ? "women" : "men"} in ${v.married}`,
+        note: candidates.length ? "" : "No suitable candidates found.",
+        fields: candidates.length ? [{ name: "spouse_id", label: "Spouse", type: "list",
+          options: candidates.map(c => ({ value: c.id, label: optionLabel(c) })) }] : [],
+        onSubmit: candidates.length ? w => submitAndReload("/api/spouse/select",
+          { person_id: p.id, married: v.married, spouse_id: w.spouse_id }) : null,
+      });
+    },
+  });
+}
+
+function marriageTitle(f) {
+  const names = f.parents.map(id => tree.people[id] ? nameOf(tree.people[id]) : id);
+  return names.join(" & ") + " (" + (f.married ?? "?") + ")";
+}
+
+function editMarriage(f) {
+  openForm({
+    title: "Edit marriage: " + marriageTitle(f),
+    fields: [
+      { name: "married", label: "Marriage year", type: "number", value: f.married ?? "" },
+      { name: "divorced", label: "Divorce year (empty = none)", type: "number", value: f.divorced ?? "" },
+    ],
+    onSubmit: v => submitAndReload("/api/family/edit", { index: f.index, ...v }),
+  });
+}
+
+function addChild(f) {
+  openForm({
+    title: "Add child of " + marriageTitle(f),
+    fields: [
+      { name: "name", label: "Name", type: "text" },
+      { name: "gender", label: "Gender", type: "select", options: [{ value: "M", label: "M" }, { value: "F", label: "F" }] },
+      { name: "born", label: "Birth year", type: "number" },
+      { name: "died", label: "Death year (optional)", type: "number" },
+    ],
+    onSubmit: v => submitAndReload("/api/child/add", { index: f.index, ...v }),
+  });
+}
+
+async function selectChild(f) {
+  try {
+    const { candidates } = await api("/api/child/candidates?index=" + f.index);
+    openForm({
+      title: "Select child of " + marriageTitle(f),
+      note: candidates.length ? "Persons without parents, born between the marriage and the first parent's death."
+                              : "No suitable candidates found.",
+      fields: candidates.length ? [{ name: "child_id", label: "Child", type: "list",
+        options: candidates.map(c => ({ value: c.id, label: optionLabel(c) })) }] : [],
+      onSubmit: candidates.length ? v => submitAndReload("/api/child/select", { index: f.index, child_id: v.child_id }) : null,
+    });
+  } catch (ex) {
+    toast(ex.message, true);
+  }
+}
+
+loadTree().catch(ex => toast(ex.message, true));
+</script>
+</body>
+</html>

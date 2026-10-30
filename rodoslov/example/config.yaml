@@ -1,0 +1,64 @@
+# Default configuration for genealogy.py / GenealogyFaker.
+#
+# Each person is simulated year by year; every value below feeds a per-year
+# probability roll (death, marriage, childbirth), not a one-shot draw from a
+# range. Values that vary by century are given as {century: value} maps,
+# where the century is the ordinal century of a person's birth year (e.g.
+# 1850 -> 19). A birth year earlier/later than the map's range uses the
+# earliest/latest entry given.
+
+# Death hazard curve: the probability of dying in a given year is
+# premature_death_probability (flat) below life_expectancy_lo, then grows
+# linearly to a certainty (1.0) at life_expectancy_hi.
+life_expectancy_lo: 55
+
+life_expectancy_hi:
+  18: 75
+  19: 80
+  20: 90
+
+# Annual death probability while below life_expectancy_lo. These are yearly
+# hazard rates (not lifetime odds), so they're much smaller than the old
+# one-shot "premature death" probabilities used to be.
+premature_death_probability:
+  17: 0.004
+  18: 0.002
+  19: 0.001
+  20: 0.0005
+
+# Marriageable age band, and the probability of marrying in any given
+# eligible year while unmarried. A widowed tracked-lineage member re-enters
+# this same roll while still within the band, which is how remarriage
+# happens — no separate remarriage settings needed.
+marriage_age_lo: 18
+marriage_age_hi: 55
+marriage_probability_per_year: 0.12
+
+# Probability that a marriage ends in divorce in any given year (checked
+# only after the marriage's first year). Treated just like a spouse's death:
+# it frees the tracked-lineage member to remarry, but the ex-spouse
+# themselves is never tracked into a new marriage.
+divorce_probability_per_year:
+  17: 0.0
+  18: 0.0005
+  19: 0.001
+  20: 0.01
+
+# Childbearing age band (based on the mother). The per-year childbirth
+# probability while married is fertility_rate / (childbearing_age_hi -
+# childbearing_age_lo), so fertility_rate keeps meaning roughly "average
+# children per marriage that spans the whole band".
+childbearing_age_lo: 18
+childbearing_age_hi: 40
+
+fertility_rate:
+  18: 4
+  19: 3
+  20: 2.5
+  21: 2
+
+# Minimum number of years after a birth before another childbirth can be
+# rolled for the same mother.
+birth_interval_lo: 2
+
+gender_ratio: 0.5
