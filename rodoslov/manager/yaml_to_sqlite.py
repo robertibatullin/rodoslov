@@ -1,12 +1,10 @@
-import os
 import sqlite3
 from pathlib import Path
 
 import yaml
 
-BASE_DIR = Path(__file__).resolve().parent
-ROOT_DIR = BASE_DIR
-DB_PATH = BASE_DIR / "genealogy.db"
+from sqlite_client import SQLITE_DB_FILENAME
+
 
 # A person appearing in several files must agree on these, or two different
 # people have been given the same id.
@@ -28,11 +26,10 @@ def _family_key(fam: dict) -> tuple:
     return (parents, children, fam.get("married"), fam.get("divorced"))
 
 
-def yaml_to_sqlite(root_dir: str | Path, db_path: str | Path) -> None:
+def yaml_to_sqlite(community_dir: str | Path) -> None:
     """Recursively scan *.yaml / *.yml and load genealogical data into SQLite."""
-    root = Path(root_dir).resolve()
-    db_file = Path(db_path).resolve()
-    conn = sqlite3.connect(str(db_file))
+    root = Path(community_dir).resolve()
+    conn = sqlite3.connect(str(root / SQLITE_DB_FILENAME))
     cur = conn.cursor()
     # "biographies" is hand-written content, not derived from YAML, so it is
     # never dropped: only the YAML-derived tables are rebuilt.
@@ -135,11 +132,17 @@ def yaml_to_sqlite(root_dir: str | Path, db_path: str | Path) -> None:
 
     conn.commit()
     conn.close()
-    size_kb = db_file.stat().st_size / 1024
+    size_kb = (root / SQLITE_DB_FILENAME).stat().st_size / 1024
     print(f"Processed {len(yaml_files)} YAML file(s)")
     print(f"  -> {len(all_people)} people, {len(all_families)} families")
-    print(f"  -> {db_file}  ({size_kb:.1f} KB)")
+    print(f"  -> {root / SQLITE_DB_FILENAME}  ({size_kb:.1f} KB)")
 
 
-# ── Run conversion ────────────────────────────────────────────
-yaml_to_sqlite(ROOT_DIR, DB_PATH)
+if __name__ == "__main__":
+    import sys
+
+    if len(sys.argv) != 2:
+        print("Usage: python yaml_to_sqlite.py <community_dir>")
+        sys.exit(1)
+    community_dir = sys.argv[1]
+    yaml_to_sqlite(community_dir)

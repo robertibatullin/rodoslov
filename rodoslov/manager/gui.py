@@ -18,7 +18,6 @@ offer existing people as spouses / children).
 import argparse
 import random
 import sqlite3
-import subprocess
 import sys
 import threading
 import webbrowser
@@ -27,11 +26,10 @@ from pathlib import Path
 import yaml
 from flask import Flask, jsonify, request, send_file
 
-from genealogy_sqlite_client import GenealogySQLiteClient
+from rodoslov.manager.sqlite_client import GenealogySQLiteClient, SQLITE_DB_FILENAME
+from rodoslov.manager.yaml_to_sqlite import yaml_to_sqlite
 
 BASE_DIR = Path(__file__).resolve().parent
-DB_PATH = BASE_DIR / "genealogy.db"
-YAML_TO_SQLITE = BASE_DIR / "yaml_to_sqlite.py"
 HTML_PATH = BASE_DIR / "gui.html"
 
 MIN_MARRIAGE_AGE = 18
@@ -39,7 +37,6 @@ SPOUSE_MAX_AGE_GAP = 10
 _ID_RNG = random.SystemRandom()
 
 app = Flask(__name__)
-YAML_FILE: Path
 ALLOWED_HOSTS: set[str] = set()
 
 
@@ -83,13 +80,10 @@ def save_data(data: dict) -> None:
 
 def sync_db() -> str | None:
     """Run yaml_to_sqlite.py; return a warning string on failure, else None."""
-    result = subprocess.run(
-        [sys.executable, str(YAML_TO_SQLITE)],
-        cwd=str(BASE_DIR), capture_output=True, text=True, encoding="utf-8",
-    )
-    if result.returncode != 0:
-        last = (result.stderr or result.stdout).strip().splitlines()
-        return "Saved, but database update failed: " + (last[-1] if last else "unknown error")
+    try:
+        yaml_to_sqlite(DB_PATH.parent)
+    except Exception as e:
+        return f"Saved, but database update failed: {e}"
     return None
 
 
@@ -396,21 +390,24 @@ def api_child_select():
 # ── Entry point ───────────────────────────────────────────────
 
 def main() -> None:
-    global YAML_FILE
+    """
+    lineage path is a path to yaml file in a lineage subdir in a community dir
+    """
     parser = argparse.ArgumentParser(description="Browser GUI for editing a genealogy YAML file.")
-    parser.add_argument("yaml_file", type=str, help="genealogy YAML file to edit")
+    parser.add_argument("lineage_path", type=str, help="genealogy YAML file to edit")
     parser.add_argument("--port", type=int, default=5000)
     parser.add_argument("--no-browser", action="store_true", help="do not open a browser window")
     args = parser.parse_args()
 
-    YAML_FILE = Path(args.yaml_file).resolve()
-    if not YAML_FILE.is_file():
-        sys.exit(f"File not found: {YAML_FILE}")
-    try:
-        YAML_FILE.relative_to(BASE_DIR)
-    except ValueError:
-        print(f"WARNING: {YAML_FILE} is outside {BASE_DIR}; yaml_to_sqlite.py will not see it.",
-              file=sys.stderr)
+    lineage_path = Path(args.lineage_path).resolve()
+    if not lineage_path.is_file():
+        sys.exit(f"File not found: {lineage_path}")
+    global DB_PATH
+    community_dir = Path(lineage_path).resolve().parent.parent
+    DB_PATH = community_dir / SQLITE_DB_FILENAME
+    global YAML_FILE
+    YAML_FILE = lineage_path
+
     if not DB_PATH.exists():
         print("genealogy.db not found, building it...", file=sys.stderr)
         warning = sync_db()
@@ -421,7 +418,7 @@ def main() -> None:
     url = f"http://127.0.0.1:{args.port}/"
     if not args.no_browser:
         threading.Timer(1.0, webbrowser.open, args=(url,)).start()
-    print(f"Editing {YAML_FILE} at {url}")
+    print(f"Editing {lineage_path} at {url}")
     app.run(host="127.0.0.1", port=args.port, debug=False)
 
 

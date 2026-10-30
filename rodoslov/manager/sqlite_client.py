@@ -2,16 +2,14 @@ import sqlite3
 from pathlib import Path
 
 import pandas as pd
-import yaml
+
+
+SQLITE_DB_FILENAME = "genealogy.db"
 
 
 class GenealogySQLiteClient:
-    def __init__(self, db_path: str | Path | None = None, config_path: str | Path | None = None):
-        base_dir = Path(__file__).resolve().parent
-        self.db_path = str(Path(db_path).resolve()) if db_path is not None else str(base_dir / "genealogy.db")
-        config_path = Path(config_path).resolve() if config_path is not None else base_dir / "config.yaml"
-        with open(config_path, "r", encoding="utf-8") as f:
-            self.config = yaml.safe_load(f)
+    def __init__(self, community_path: str | Path):
+        self.db_path = str(Path(community_path).resolve() / SQLITE_DB_FILENAME)
 
     def query(self, sql: str, params: dict | None = None) -> pd.DataFrame:
         conn = sqlite3.connect(self.db_path)
@@ -31,13 +29,11 @@ class GenealogySQLiteClient:
             self,
             year: int,
             gender: str,
-            min_age: int | None = None,
-            max_age: int | None = None
+            min_age: int,
+            max_age: int
             ) -> pd.DataFrame: 
-        marriage_age_lo = self.config["marriage_age_lo"] if min_age is None else min_age
-        marriage_age_hi = self.config["marriage_age_hi"] if max_age is None else max_age
-        min_birth_year = year - marriage_age_hi
-        max_birth_year = year - marriage_age_lo
+        min_birth_year = year - max_age
+        max_birth_year = year - min_age
         sql = """
         SELECT p.id, p.name, p.born, p.died, p.source_file
         FROM   people p
