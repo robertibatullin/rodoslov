@@ -1,42 +1,28 @@
-"""genealogy.py - Generate fake family trees in nissaga-compatible YAML format.
+"""faker.py - Generate fake family trees in nissaga-compatible YAML format.
 
 Each person's life is simulated year by year (birth to death or cutoff),
 rolling a probability each year for death, marriage, and (while married)
-childbirth. Death always ends a person's timeline immediately, so no event
-can ever be generated after it — marriage, remarriage, and childbirth timing
-all fall out of that same yearly walk rather than being pre-drawn from a
-range.
-
-Installation:
-    pip install pyyaml nissaga graphviz
-
-    For rendering (optional), also install the graphviz system package:
-        apt-get install graphviz      # Debian/Ubuntu
-        brew install graphviz          # macOS
+childbirth.
 
 Usage:
-    python genealogy.py <family_dir> [--config FILE] [--seed SEED] [--cutoff YEAR]
+    python faker.py <lineage_dir> [--config FILE] [--seed SEED] [--cutoff YEAR]
 
     Arguments:
-        family_dir   Directory holding this family's config.yaml (progenitor,
-                     majorat, name sources, output settings - see
-                     genealogy/vloszek/config.yaml for an example). The
-                     output YAML is written into this same directory.
+        lineage_dir  Directory holding this lineage's config.yaml (see
+                     example/Smith/config.yaml). The output YAML is written into this same directory.
 
     Options:
         --config FILE   Path to the demography config YAML shared across
                          families - death/marriage/fertility rates etc.
-                         (default: config.yaml next to this script)
+                         (default: default_config.yaml next to this script)
         --seed SEED     Random seed for reproducibility (default: None)
         --cutoff YEAR   Stop generating beyond this year (default: current year)
 
 Examples:
-    python genealogy.py genealogy/vloszek
-    python genealogy.py genealogy/vloszek --seed 99
-    python genealogy.py genealogy/vloszek --config genealogy/config.yaml --cutoff 1980
+    python faker.py example/Smith
+    python faker.py example/Smith --seed 99
+    python faker.py example/Smith --config custom_config.yaml --cutoff 1980
 
-    # Render with nissaga:
-    nissaga genealogy/vloszek/Vloszek.yaml png
 """
 
 import argparse
@@ -50,7 +36,7 @@ from pathlib import Path
 import yaml
 
 DEFAULT_CUTOFF_YEAR = datetime.now().year
-DEFAULT_CONFIG_PATH = Path(__file__).parent / "config.yaml"
+DEFAULT_CONFIG_PATH = Path(__file__).parent / "default_config.yaml"
 _ID_RNG = random.SystemRandom()
 
 
@@ -87,7 +73,7 @@ class GenealogyFaker:
         seed: int | None = None,
         cutoff_year: int | None = None,
         majorat: bool = False,
-        config_path: str | None = None,
+        demography_config_path: str | None = None,
         progenitor_gender: str | None = None,
         surname: str | None = None,
         extend_path: str | None = None,
@@ -106,8 +92,8 @@ class GenealogyFaker:
         self.majorat = majorat
         self.progenitor_gender = progenitor_gender
         self.surname = surname
-        with open(config_path or DEFAULT_CONFIG_PATH, "r", encoding="utf-8") as f:
-            self.config = yaml.safe_load(f)
+        with open(demography_config_path or DEFAULT_CONFIG_PATH, "r", encoding="utf-8") as f:
+            self.demography_config = yaml.safe_load(f)
         self.m_names = self._load_names(m_names) if m_names else None
         self.f_names = self._load_names(f_names) if f_names else None
         self.m_surnames = self._load_names(m_surnames) if m_surnames else None
@@ -125,6 +111,7 @@ class GenealogyFaker:
         otherwise two families generated with one seed get identical ids
         and silently overwrite each other in the database.
         """
+        # TODO: move this function out to manager; check duplicates across db, not just this run
         while True:
             pid = f'P-{_ID_RNG.getrandbits(32)}'
             if pid not in self.people:
@@ -176,17 +163,17 @@ class GenealogyFaker:
     def _century(year: int) -> int:
         return (year - 1) // 100 + 1
 
-    def _config_value(self, key: str, year: int):
+    def _demography_config_value(self, key: str, year: int):
         """Look up a config value for the given year.
 
         A config entry may be a constant scalar, or a {century: value} map for
         values that vary over time (century = ordinal century of `year`, e.g.
         1850 -> 19). A year outside a map's range clamps to the nearest
         available century. This is the single place that should read
-        self.config, so any key can be made century-dependent purely by
+        self.demography_config, so any key can be made century-dependent purely by
         editing the YAML, with no code changes.
         """
-        value = self.config[key]
+        value = self.demography_config[key]
         if isinstance(value, dict):
             centuries = sorted(value)
             century = min(max(self._century(year), centuries[0]), centuries[-1])
@@ -199,7 +186,7 @@ class GenealogyFaker:
         `propensity` is drawn per-person in (0,1); the effective probability
         is baseline * (1 + propensity), clamped to a valid [0,1] range.
         """
-        return min(1.0, self._config_value(key, year) * (1 + propensity))
+        return min(1.0, self._demography_config_value(key, year) * (1 + propensity))
 
     def _death_hazard(self, person: PersonRecord, age: int) -> float:
         """Probability that `person` dies this year, at this age.
@@ -208,8 +195,8 @@ class GenealogyFaker:
         a certainty (1.0) at life_expectancy_hi. The premature-death floor is
         individually scaled by the person's own premature_death_propensity.
         """
-        life_expectancy_lo = self._config_value("life_expectancy_lo", person.born)
-        life_expectancy_hi = self._config_value("life_expectancy_hi", person.born)
+        life_expectancy_lo = self._demography_config_value("life_expectancy_lo", person.born)
+        life_expectancy_hi = self._demography_config_value("life_expectancy_hi", person.born)
         premature_probability = self._scaled_probability(
             "premature_death_probability", person.born, person.premature_death_propensity
         )
@@ -222,9 +209,9 @@ class GenealogyFaker:
 
     def _childbirth_probability(self, mother_birth_year: int) -> float:
         """Constant (age-independent) probability of a childbirth this year, while married."""
-        fertility_rate = self._config_value("fertility_rate", mother_birth_year)
-        childbearing_age_lo = self._config_value("childbearing_age_lo", mother_birth_year)
-        childbearing_age_hi = self._config_value("childbearing_age_hi", mother_birth_year)
+        fertility_rate = self._demography_config_value("fertility_rate", mother_birth_year)
+        childbearing_age_lo = self._demography_config_value("childbearing_age_lo", mother_birth_year)
+        childbearing_age_hi = self._demography_config_value("childbearing_age_hi", mother_birth_year)
         return fertility_rate / (childbearing_age_hi - childbearing_age_lo)
 
     def _try_childbirth(
@@ -245,9 +232,9 @@ class GenealogyFaker:
         surname.
         """
         mother_age = year - mother.born
-        childbearing_age_lo = self._config_value("childbearing_age_lo", mother.born)
-        childbearing_age_hi = self._config_value("childbearing_age_hi", mother.born)
-        birth_interval_lo = self._config_value("birth_interval_lo", mother.born)
+        childbearing_age_lo = self._demography_config_value("childbearing_age_lo", mother.born)
+        childbearing_age_hi = self._demography_config_value("childbearing_age_hi", mother.born)
+        birth_interval_lo = self._demography_config_value("birth_interval_lo", mother.born)
         cooldown_ok = last_birth_year is None or (year - last_birth_year) >= birth_interval_lo
         if not (
             cooldown_ok
@@ -255,7 +242,7 @@ class GenealogyFaker:
             and random.random() < self._childbirth_probability(mother.born)
         ):
             return None, last_birth_year
-        child_gender = "M" if random.random() < self._config_value("gender_ratio", year) else "F"
+        child_gender = "M" if random.random() < self._demography_config_value("gender_ratio", year) else "F"
         child = self._make_person(
             year, child_gender, exclude_names=used_child_names, surname=father.surname or self.surname
         )
@@ -355,14 +342,13 @@ class GenealogyFaker:
 
         Each year: check death (own, then current spouse's, if married);
         check divorce, if married and still alive; roll a marriage if
-        currently unmarried and within the marriageable age band (this
-        covers remarriage for free — a freshly widowed or divorced member is
-        just "unmarried" again); roll a childbirth if married and the mother
+        currently unmarried and within the marriageable age band;
+        roll a childbirth if married and the mother
         is within the childbearing band. Recurses into children (respecting
         majorat) once this member's own life is fully resolved.
         """
-        marriage_age_lo = self._config_value("marriage_age_lo", person.born)
-        marriage_age_hi = self._config_value("marriage_age_hi", person.born)
+        marriage_age_lo = self._demography_config_value("marriage_age_lo", person.born)
+        marriage_age_hi = self._demography_config_value("marriage_age_hi", person.born)
 
         spouse: PersonRecord | None = None
         current_family: dict | None = None
@@ -587,7 +573,7 @@ class GenealogyFaker:
             elif self.majorat:
                 progenitor_gender = "M"
             else:
-                progenitor_gender = "M" if random.random() < self._config_value("gender_ratio", self.progenitor_birth_year) else "F"
+                progenitor_gender = "M" if random.random() < self._demography_config_value("gender_ratio", self.progenitor_birth_year) else "F"
             progenitor = self._make_person(self.progenitor_birth_year, progenitor_gender, surname=self.surname)
             if self.majorat:
                 self._mark_head_of_family(progenitor)
@@ -652,7 +638,7 @@ def generate_family_tree(
         seed=seed,
         cutoff_year=cutoff_year,
         majorat=majorat,
-        config_path=config_path,
+        demography_config_path=config_path,
         progenitor_gender=progenitor_gender,
         surname=surname,
         extend_path=extend_path,
@@ -698,8 +684,12 @@ def main():
     args = parser.parse_args()
 
     family_dir = Path(args.family_dir)
-    with open(family_dir / "config.yaml", "r", encoding="utf-8") as f:
-        family_config = yaml.safe_load(f)
+    try:
+        with open(family_dir / "config.yaml", "r", encoding="utf-8") as f:
+            family_config = yaml.safe_load(f)
+    except FileNotFoundError:
+        print(f"Config file not found: {family_dir / 'config.yaml'}", file=sys.stderr)
+        sys.exit(1)
 
     extend_path = family_config.get("extend")
     progenitor = family_config.get("progenitor") or {}

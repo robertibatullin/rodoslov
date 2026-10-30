@@ -1,11 +1,10 @@
-# Default configuration for genealogy.py / GenealogyFaker.
+# Default configuration for GenealogyFaker.
 #
 # Each person is simulated year by year; every value below feeds a per-year
-# probability roll (death, marriage, childbirth), not a one-shot draw from a
-# range. Values that vary by century are given as {century: value} maps,
-# where the century is the ordinal century of a person's birth year (e.g.
-# 1850 -> 19). A birth year earlier/later than the map's range uses the
-# earliest/latest entry given.
+# probability roll (death, marriage, childbirth). Values that vary by century
+# are given as {century: value} maps, where the century is the ordinal century
+# of a person's birth year (e.g. 1850 -> 19). A birth year earlier/later than
+# the map's range uses the earliest/latest entry given.
 
 # Death hazard curve: the probability of dying in a given year is
 # premature_death_probability (flat) below life_expectancy_lo, then grows
@@ -17,9 +16,7 @@ life_expectancy_hi:
   19: 80
   20: 90
 
-# Annual death probability while below life_expectancy_lo. These are yearly
-# hazard rates (not lifetime odds), so they're much smaller than the old
-# one-shot "premature death" probabilities used to be.
+# Annual death probability while below life_expectancy_lo.
 premature_death_probability:
   17: 0.004
   18: 0.002
@@ -29,7 +26,7 @@ premature_death_probability:
 # Marriageable age band, and the probability of marrying in any given
 # eligible year while unmarried. A widowed tracked-lineage member re-enters
 # this same roll while still within the band, which is how remarriage
-# happens — no separate remarriage settings needed.
+# happens.
 marriage_age_lo: 18
 marriage_age_hi: 55
 marriage_probability_per_year: 0.12
