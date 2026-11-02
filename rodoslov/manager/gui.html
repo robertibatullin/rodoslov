@@ -39,7 +39,7 @@
   .dialog h3 { margin: 0 0 12px; font-size: 16px; }
   .dialog label { display: block; margin-bottom: 9px; font-size: 13px; }
   .dialog label span { display: block; margin-bottom: 2px; color: #444; }
-  .dialog input, .dialog select { width: 100%; box-sizing: border-box; padding: 5px; font-size: 14px; }
+  .dialog input, .dialog select, .dialog textarea { width: 100%; box-sizing: border-box; padding: 5px; font-size: 14px; }
   .dialog .note { font-size: 12px; color: #666; margin-bottom: 8px; }
   .dialog .err { color: #b00020; font-size: 13px; margin: 6px 0; min-height: 1em; }
   .dialog .btns { text-align: right; margin-top: 8px; }
@@ -457,6 +457,9 @@ function openForm({ title, note, fields, submitLabel, onSubmit }) {
         opt.textContent = o.label;
         inp.appendChild(opt);
       });
+    } else if (f.type === "textarea") {
+      inp = document.createElement("textarea");
+      inp.rows = 6;
     } else {
       inp = document.createElement("input");
       inp.type = f.type === "number" ? "number" : "text";
@@ -537,6 +540,7 @@ function editPerson(p) {
       { name: "name", label: "Name", type: "text", value: p.name || "" },
       { name: "born", label: "Birth year", type: "number", value: p.born ?? "" },
       { name: "died", label: "Death year (optional)", type: "number", value: p.died ?? "" },
+      { name: "bio", label: "Bio (optional)", type: "textarea", value: p.bio ?? "" },
     ],
     onSubmit: v => submitAndReload("/api/person/edit", { id: p.id, ...v }),
   });

@@ -318,7 +318,8 @@ def api_person_delete():
 def api_person_edit():
     req = body()
     data = load_data()
-    person = get_person(data, req.get("id"))
+    person_id = req.get("id")
+    person = get_person(data, person_id)
     name = text_of(req.get("name"))
     born = year_of(req.get("born"), "Birth year", required=True)
     died = year_of(req.get("died"), "Death year")
@@ -329,6 +330,12 @@ def api_person_edit():
             person.pop(key, None)
         else:
             person[key] = value
+    if "bio" in req:
+        bio = text_of(req.get("bio"))
+        if bio:
+            GenealogySQLiteClient(DB_PATH).write_bio(person_id, bio)
+        else:
+            drop_biography(person_id)
     return finish(data)
 
 

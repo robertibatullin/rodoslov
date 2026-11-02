@@ -110,6 +110,21 @@ def test_edit_person(client, community):
     assert person["name"] == "Johnny" and person["born"] == 1951 and "died" not in person
 
 
+def test_edit_person_bio(client, db_path):
+    client.post("/api/person/edit", json={"id": "P-1", "born": 1950, "bio": " A farmer. "})
+    assert db_rows(db_path, "SELECT bio FROM biographies WHERE id = 'P-1'") == [("A farmer.",)]
+    client.post("/api/person/edit", json={"id": "P-1", "born": 1950})  # no bio key: untouched
+    assert db_rows(db_path, "SELECT bio FROM biographies WHERE id = 'P-1'") == [("A farmer.",)]
+    client.post("/api/person/edit", json={"id": "P-1", "born": 1950, "bio": "  "})  # empty: cleared
+    assert db_rows(db_path, "SELECT bio FROM biographies WHERE id = 'P-1'") == []
+
+
+def test_edit_person_invalid_keeps_bio(client, db_path):
+    response = client.post("/api/person/edit", json={"id": "P-1", "born": 1950, "died": 1900, "bio": "X"})
+    assert response.status_code == 400
+    assert db_rows(db_path, "SELECT bio FROM biographies") == []
+
+
 def test_edit_unknown_person(client):
     assert client.post("/api/person/edit", json={"id": "P-404", "born": 1900}).status_code == 400
 
